@@ -73,7 +73,8 @@ data class JsTool(val kind: String, val exe: File) {
 
     val buildCommand: List<String>
         get() = when (kind) {
-            "bun", "npm" -> listOf(exe.absolutePath, "run", "build")
+            "npm" -> listOf(exe.absolutePath, "run", "build")
+            "bun" -> listOf(exe.absolutePath, "--bun", "run", "build")
             // Deno creates no node_modules/.bin shims, so `deno task build` cannot resolve the CLI,
             // so we run its bin file directly.
             "deno" -> listOf(
