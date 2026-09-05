@@ -36,8 +36,7 @@ To add a plugin, create `plugins/<name>/manifest.json` and add a `src/main` fold
 
 - **JDK 25 or later** and the **Android SDK**, with `build-tools` and `platform 36`.
   Don't forget to set `sdk.dir` in `local.properties`, or set the `ANDROID_HOME` environment variable.
-- **A JS runtime** for the JS build: [Node](https://nodejs.org/) 22.18 or later,
-  [Deno](https://deno.com/) 2, or [Bun](https://bun.com/).
+- **[Bun](https://bun.com/)** or **[Node.js](https://nodejs.org/)**.
 - **The Revenge plugin API in your local Maven repository.** Run this in the `revenge-xposed` repository:
 
   ```sh
@@ -62,7 +61,6 @@ Build one plugin, or only one part of it:
 ```sh
 ./gradlew packageExamplePlugin              # one plugin -> build/dist/<id>.zip
 ./gradlew :plugins:example-plugin:dexJar    # native only -> plugins/example-plugin/build/outputs/plugin/plugin.jar
-# replace bun with npm if you use node
 bun install                                 # install the dependencies
 bun run build                               # every JS bundle -> plugins/<name>/build/js/index.js
 bun run build example-plugin                # the JS bundle of one plugin
