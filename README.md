@@ -53,13 +53,14 @@ Build and package every plugin:
 ./gradlew packageAllPlugins
 ```
 
-The task writes one `build/dist/<id>.zip` per plugin. Each ZIP holds `manifest.json`, the dexed JAR
-of a native plugin, and the JS bundle of a plugin that has one.
+The task writes one `build/dist/<id>@<version>.zip` per plugin. Each ZIP holds `manifest.json`, the
+dexed JAR of a native plugin, and the JS bundle of a plugin that has one. The version comes from
+`manifest.json`, so an artifact always states which version it holds.
 
 Build one plugin, or only one part of it:
 
 ```sh
-./gradlew packageExamplePlugin              # one plugin -> build/dist/<id>.zip
+./gradlew packageExamplePlugin              # one plugin -> build/dist/<id>@<version>.zip
 ./gradlew :plugins:example-plugin:dexJar    # native only -> plugins/example-plugin/build/outputs/plugin/plugin.jar
 bun install                                 # install the dependencies
 bun run build                               # every JS bundle -> plugins/<name>/build/js/index.js
@@ -217,7 +218,7 @@ A user can add the repository URL in Revenge. Browsing, dependency resolution an
 A **channel is a named pointer into the published versions of one plugin**. In `index.json` each plugin carries both maps:
 
 ```jsonc
-"channels": { "latest": "1.2.0", "testing": "1.3.0-beta" },
+"channels": { "latest": "1.2.0", "beta": "1.3.0-beta" },
 "versions": { "1.2.0": { /* … */ }, "1.3.0-beta": { /* … */ } }
 ```
 
@@ -253,6 +254,69 @@ These rules apply:
 - A channel name carries no version semantics. An `lts` version is the same artifact as its plain version.
   You only point at it for longer. To promote `beta` to `latest`, edit the pointer. No rebuilds or republishes.
 - **A dependency never references a channel.** A dependency constrains versions only, so a mixed-channel install can resolve.
+
+### The pool
+
+Every published artifact lives in one flat directory on the published branch, next to the index:
+
+```
+pool/com.example.plugin@1.0.0.zip
+pool/com.example.plugin@1.2.0.zip
+pool/palmdevs.silent-typing@1.0.0.zip
+index.json
+```
+
+The branch is `gh-pages` by default. To use a different one, set the `POOL_BRANCH` repository
+variable under Settings, Secrets and variables, Actions. All three workflows read it, so one
+variable moves the pool, the index and the migration together.
+
+The pool is the **only** record of what is published. A version is published when its artifact is in
+the pool, and `index.json` is a pure function of the directory. Regenerating it can never invent or
+lose a version. To unpublish a version, delete its file and regenerate.
+
+The `@` separator is in neither the ID charset nor the version charset, so both halves always parse.
+The generator also opens every archive and compares the file name against the manifest inside it. A
+mislabeled artifact fails the build instead of entering the index under the wrong version.
+
+Git tags and GitHub Releases are written for changelogs only. Nothing reads them.
+
+### Automated releases
+
+Two workflows publish the repository. The CLI holds the release logic, and it never talks to a Git
+host. Both workflows call it with local files. To port the repository to another host, you rewrite
+the workflow steps and change no CLI code.
+
+The workflows declare triggers, permissions and inputs only. Each step runs a script in
+`.github/scripts/`, so you can run the same code on your machine and read a failure as a shell
+error rather than a rendered YAML block.
+
+`release.yml` runs on a push to `main`. It checks out the pool, then calls `plan-releases`, which
+reads every `manifest.json` and lists the plugins whose version is not in the pool yet. The command
+also refuses a downgrade. It fails when a manifest version is below the newest published version of
+that plugin. The comparison uses the same order as the client, so a bare version wins over a labeled
+one. You can promote `1.2.0-rc` to `1.2.0` without a failure.
+
+The workflow then builds the planned plugins, copies the artifacts into the pool, regenerates the
+index, and pushes **artifacts and index in one commit**. The branch never holds an index that points
+at a file it does not have, and a run that fails part way publishes nothing. Re-running it is safe.
+
+Because the pool is keyed by plugin ID, renaming a plugin folder keeps its release history.
+
+Run the planner against a checkout of the published branch to see what a push would release:
+
+```sh
+git clone --branch gh-pages <your repo url> published
+bun run plan-releases -- --pool published/pool
+bun run plan-releases -- --pool published/pool --out plan.json
+```
+
+The planner writes nothing to the pool. `--pool` is required, because an absent directory looks like
+an empty pool and would republish every version.
+
+`publish-index.yml` runs on dispatch only. It regenerates `index.json` from the artifacts already in
+the pool and commits it when it changed. Use it after you edit the `repo.config.json` channel
+overrides, or after you delete an artifact to unpublish a version. Releasing does not need it.
+
 
 ### Serve a repository on your machine
 
