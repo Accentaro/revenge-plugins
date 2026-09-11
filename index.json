@@ -8,7 +8,7 @@
       "description": "A compact server dock with a searchable server and DM drawer, folders, and drag and drop.",
       "author": "kmmiio99o, Rosie, Benjii",
       "channels": {
-        "latest": "1.0.1"
+        "latest": "1.0.9"
       },
       "versions": {
         "1.0.0": {
@@ -28,6 +28,19 @@
           "url": "https://accentaro.github.io/revenge-plugins/pool/dev.rain.serverdrawer@1.0.1.zip",
           "sha256": "84b3d7712ded8ecdc88de69b89a4f80b771d63e734d9908d273ad572639d360c",
           "size": 17161,
+          "dependencies": {
+            "revenge.api": {
+              "version": ">=1 <2"
+            },
+            "discord": {
+              "version": ">=344.13 <347"
+            }
+          }
+        },
+        "1.0.9": {
+          "url": "https://accentaro.github.io/revenge-plugins/pool/dev.rain.serverdrawer@1.0.9.zip",
+          "sha256": "869c20e6b6a749b2588cf6ad7e778849ab1468ec339c93ca54c5641675c13cba",
+          "size": 18025,
           "dependencies": {
             "revenge.api": {
               "version": ">=1 <2"
