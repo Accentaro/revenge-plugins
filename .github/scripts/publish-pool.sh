@@ -26,7 +26,7 @@ attempt_publish() {
         cp "$zip" "$POOL_CHECKOUT/pool/${file}" || return 1
     done < plan.tsv
 
-    bun run generate-index \
+    node node_modules/@revenge-mod/plugin-cli/bin/revenge-plugin.js generate-index \
         --dist "$POOL_CHECKOUT/pool" \
         --base-url "${base}/pool" \
         --out "$POOL_CHECKOUT/index.json" || return 1

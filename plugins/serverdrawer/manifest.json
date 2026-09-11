@@ -1,0 +1,19 @@
+{
+    "format": 1,
+    "id": "dev.rain.serverdrawer",
+    "name": "ServerDrawer",
+    "description": "A compact server dock with a searchable server and DM drawer, folders, and drag and drop.",
+    "author": "kmmiio99o, Rosie, Benjii",
+    "version": "1.0.0",
+    "dependencies": {
+        "revenge.api": {
+            "version": ">=1 <2"
+        },
+        "discord": {
+            "version": ">=344.13 <345"
+        }
+    },
+    "dist": {
+        "script": "index.js"
+    }
+}
