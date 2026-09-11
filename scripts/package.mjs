@@ -13,5 +13,5 @@ const base = "plugins/serverdrawer/";
 const manifest = readFileSync(`${base}manifest.json`);
 const { id, version } = JSON.parse(manifest);
 mkdirSync("build/dist", { recursive: true });
-writeFileSync(`build/dist/${id}.zip`, zipSync({ "manifest.json": manifest, "index.js": readFileSync(`${base}build/js/index.js`) }));
+writeFileSync(`build/dist/${id}@${version}.zip`, zipSync({ "manifest.json": manifest, "index.js": readFileSync(`${base}build/js/index.js`) }));
 console.log(`Packaged ${id}@${version}`);
