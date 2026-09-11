@@ -109,11 +109,25 @@ export function transformLeftPanelContent(
         const content = inspectElement(childrenValue[1]);
         if (!rail || !content || !Reflect.has(content.props, "style")) return undefined;
         const style = Reflect.get(content.props, "style");
-        const nextContentProps = cloneReplacing(
+        let nextContentProps = cloneReplacing(
             content.propsObject,
             "style",
             appendedStyle(style, dockHeight),
         );
+        const screens = inspectElement(Reflect.get(content.props, "children"));
+        const screenChildren = screens && Reflect.get(screens.props, "children");
+        if (screens && Array.isArray(screenChildren) && screenChildren.every(child => !child || inspectElement(child)?.props.style)) {
+            const paddedScreens = screenChildren.map(child => {
+                const screen = inspectElement(child);
+                if (!screen) return child;
+                const props = cloneReplacing(screen.propsObject, "style", [screen.props.style, { paddingBottom: dockHeight }]);
+                return cloneReplacing(screen.object, "props", props);
+            });
+            const screenProps = cloneReplacing(screens.propsObject, "children", paddedScreens);
+            nextContentProps = cloneReplacing(nextContentProps, "children", cloneReplacing(screens.object, "props", screenProps));
+            // Keep each native screen's background full-height while reserving space inside it for the dock.
+            nextContentProps = cloneReplacing(nextContentProps, "style", appendedStyle(style, 0));
+        }
         const nextContent = cloneReplacing(content.object, "props", nextContentProps);
         const retainedRail = retainHiddenRail
             ? inspectElement(retainHiddenRail(rail.element))?.element ?? null

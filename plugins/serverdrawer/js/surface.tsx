@@ -17,9 +17,6 @@ import {
 } from "./model";
 import { usePalette } from "./theme";
 import type { HostComponent, Preferences, SurfaceApi, Unpatch } from "./types";
-/** Largest phone dock produced by Discord 213's recovered sizing function. */
-export const SERVER_DOCK_HEIGHT = 85;
-export const SERVER_DOCK_OFFSET = 8;
 const DRAWER_ICON_SIZE = 52;
 const DRAWER_ITEM_WIDTH = DRAWER_ICON_SIZE + 12;
 const DRAWER_GAP = 12;
@@ -2128,7 +2125,10 @@ export function createServerDrawerSurface(
         return <View
             onLayout={(event: unknown) => {
                 const measured = eventWidth(event);
-                if (measured !== undefined && measured !== viewportWidth) setViewportWidth(measured);
+                if (measured !== undefined) {
+                    if (measured !== viewportWidth) setViewportWidth(measured);
+                    if (typeof properties.onWidthChange === "function") properties.onWidthChange(measured);
+                }
                 const measuredHeight = eventHeight(event);
                 if (measuredHeight !== undefined && measuredHeight !== viewportHeight) setViewportHeight(measuredHeight);
             }}
@@ -2158,7 +2158,7 @@ export function createServerDrawerSurface(
                     borderColor: palette.border,
                     borderRadius: 24,
                     borderWidth: 1,
-                    bottom: bottomInset + (drawerVisible ? 0 : SERVER_DOCK_OFFSET),
+                    bottom: bottomInset,
                     elevation: 0,
                     height: currentHeight,
                     left: panelLeft,
