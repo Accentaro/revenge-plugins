@@ -12,7 +12,7 @@
       },
       "versions": {
         "1.0.0": {
-          "url": "https://raw.githubusercontent.com/Accentaro/revenge-plugins/gh-pages/pool/dev.rain.serverdrawer@1.0.0.zip",
+          "url": "https://accentaro.github.io/revenge-plugins/pool/dev.rain.serverdrawer@1.0.0.zip",
           "sha256": "efff2132f2648ef49f66d6664fa8fee082b4958b8e064f531f455e69b830e1dc",
           "size": 17161,
           "dependencies": {
