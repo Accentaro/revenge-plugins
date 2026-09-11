@@ -1,0 +1,30 @@
+{
+  "format": 1,
+  "name": "Rain plugins for Revenge",
+  "description": "Standalone Rain plugins ported to Revenge Next.",
+  "plugins": {
+    "dev.rain.serverdrawer": {
+      "name": "ServerDrawer",
+      "description": "A compact server dock with a searchable server and DM drawer, folders, and drag and drop.",
+      "author": "kmmiio99o, Rosie, Benjii",
+      "channels": {
+        "latest": "1.0.0"
+      },
+      "versions": {
+        "1.0.0": {
+          "url": "https://raw.githubusercontent.com/Accentaro/revenge-plugins/gh-pages/pool/dev.rain.serverdrawer@1.0.0.zip",
+          "sha256": "efff2132f2648ef49f66d6664fa8fee082b4958b8e064f531f455e69b830e1dc",
+          "size": 17161,
+          "dependencies": {
+            "revenge.api": {
+              "version": ">=1 <2"
+            },
+            "discord": {
+              "version": ">=344.13 <345"
+            }
+          }
+        }
+      }
+    }
+  }
+}
