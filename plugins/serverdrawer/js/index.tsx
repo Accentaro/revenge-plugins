@@ -54,11 +54,18 @@ export default plugin({
             const dimensions = Native.useWindowDimensions();
             const [width, setWidth] = React.useState(dimensions.width);
             return transformLeftPanelContent(rendered, <DrawerSurface key="rain-server-drawer" bottomInset={bottomInset} onWidthChange={setWidth} />,
-                bottomInset + computeGuildDockSpecs(width).dockHeight,
+                bottomInset + computeGuildDockSpecs(Math.max(80, width - 16)).dockHeight - 6,
                 rail => <Native.View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" pointerEvents="none"
                     style={{ height: 1, width: 1, position: "absolute", left: -10000, opacity: 0 }}>
                     {rail as any}
                 </Native.View>) as any ?? rendered;
+        }
+        function YouBarBackdrop({ component, properties }: { component: any; properties: any }) {
+            const height = useInset();
+            return <Native.View pointerEvents="none" style={{ position: "absolute", bottom: 0, left: 0, right: 0,
+                height: Math.max(0, Number.isFinite(height) ? height : 0), overflow: "hidden" }}>
+                {React.createElement(component, properties)}
+            </Native.View>;
         }
         const shadeWrappers = new WeakMap<object, React.ComponentType<any>>();
         const onShade = (Original: any, element: any) => {
@@ -72,7 +79,7 @@ export default plugin({
                         listeners.add(refresh);
                         return () => { listeners.delete(refresh); };
                     }, []);
-                    return active && DrawerSurface ? null : React.createElement(Original, props);
+                    return active && DrawerSurface ? <YouBarBackdrop component={Original} properties={props} /> : React.createElement(Original, props);
                 };
                 shadeWrappers.set(Original, Wrapper);
             }

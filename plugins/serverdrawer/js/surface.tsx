@@ -24,10 +24,12 @@ const DRAWER_SIDE_PADDING = 16;
 const DRAWER_MIN_HEIGHT = 400;
 const DRAWER_MAX_HEIGHT = 832;
 const DRAWER_MIN_INSET = 32;
-const DRAWER_TRANSITION_HEIGHT = 200;
-const DOCK_MAX_WIDTH = 454;
+const DRAWER_REVEAL_DISTANCE = 120;
+const YOU_BAR_JOIN_DEPTH = 24;
+const DOCK_REST_OFFSET = 6;
 const REORDER_LONG_PRESS_MS = 500;
-const SWIPE_DISTANCE = 30;
+const SWIPE_DISTANCE = 12;
+const SWIPE_COMMIT_DISTANCE = 24;
 const SWIPE_VELOCITY = 200;
 export type DrawerLayout = "grid" | "list";
 export type DrawerView = "dms" | "servers";
@@ -1121,7 +1123,8 @@ export function createServerDrawerSurface(
         }), dmOrder);
         const selectedGuildId = model.snapshot.selectedGuildId;
         const selectedPrivateChannelId = model.snapshot.selectedPrivateChannelId;
-        const dockSpecs = computeGuildDockSpecs(viewportWidth);
+        const dockSpecs = computeGuildDockSpecs(Math.max(80, viewportWidth - 16));
+        const dockedHeight = dockSpecs.dockHeight - DOCK_REST_OFFSET;
         const availableDrawerHeight = Math.max(
             dockSpecs.dockHeight,
             viewportHeight - bottomInset - DRAWER_MIN_INSET,
@@ -1132,9 +1135,29 @@ export function createServerDrawerSurface(
                 ? availableDrawerHeight
                 : Math.max(DRAWER_MIN_HEIGHT, availableDrawerHeight)),
         );
-        const currentHeight = dragHeight ?? (expanded ? drawerHeight : dockSpecs.dockHeight);
-        const drawerVisible = expanded || currentHeight > DRAWER_TRANSITION_HEIGHT;
-        const panelWidth = drawerVisible ? Math.min(DOCK_MAX_WIDTH, viewportWidth) : dockSpecs.dockWidth;
+        const currentHeight = dragHeight ?? (expanded ? drawerHeight : dockedHeight);
+        const reveal = Math.max(0, Math.min(1, (currentHeight - dockedHeight) / DRAWER_REVEAL_DISTANCE));
+        const [rollProgress, setRollProgress] = hooks.useState(reveal);
+        hooks.useEffect(() => {
+            if (gesture.current?.claimed || Math.abs(rollProgress - reveal) < 0.001) {
+                setRollProgress(reveal);
+                return;
+            }
+            const from = rollProgress;
+            const started = Date.now();
+            const timer = setInterval(() => {
+                const elapsed = Math.min(1, (Date.now() - started) / 180);
+                setRollProgress(from + (reveal - from) * (1 - (1 - elapsed) ** 3));
+                if (elapsed === 1) clearInterval(timer);
+            }, 16);
+            return () => clearInterval(timer);
+        }, [reveal]);
+        const roll = gesture.current?.claimed ? reveal : rollProgress;
+        const compactFaceHeight = dockSpecs.dockHeight - 16;
+        const rollAngle = roll * Math.PI / 2;
+        const rollSeam = compactFaceHeight * Math.cos(rollAngle) / (1 + compactFaceHeight * Math.sin(rollAngle) / 900);
+        const drawerVisible = expanded || reveal > 0.5;
+        const panelWidth = dockSpecs.dockWidth;
         const panelLeft = Math.max(0, Math.round((viewportWidth - panelWidth) / 2));
         const drawerFolder = folderId === undefined
             ? undefined
@@ -1481,7 +1504,7 @@ export function createServerDrawerSurface(
             const now = Date.now();
             gesture.current = {
                 claimed: false,
-                height: expanded ? drawerHeight : dockSpecs.dockHeight,
+                height: expanded ? drawerHeight : dockedHeight,
                 lastAt: now,
                 lastY: y,
                 velocity: 0,
@@ -1496,6 +1519,11 @@ export function createServerDrawerSurface(
             if (!active || y === undefined) return;
             const distance = y - active.y;
             if (!active.claimed) {
+                const horizontal = Math.abs((eventCoordinate(event, "pageX") ?? active.x) - active.x);
+                if (horizontal > Math.abs(distance) && horizontal > SWIPE_DISTANCE) {
+                    gesture.current = undefined;
+                    return;
+                }
                 const opens = !expanded && distance < -SWIPE_DISTANCE;
                 // The native drawer runs simultaneously with its scroller. A plain RN responder
                 // cannot arbitrate that safely, so only claim the useful close direction at top.
@@ -1507,11 +1535,13 @@ export function createServerDrawerSurface(
                 active.claimed = true;
             }
             const now = Date.now();
-            active.velocity = (y - active.lastY) / Math.max(1, now - active.lastAt) * 1_000;
+            if (Math.abs(y - active.lastY) > 1) {
+                active.velocity = (y - active.lastY) / Math.max(1, now - active.lastAt) * 1_000;
+            }
             active.lastAt = now;
             active.lastY = y;
             const nextHeight = Math.max(
-                dockSpecs.dockHeight,
+                dockedHeight,
                 Math.min(drawerHeight, active.height - distance),
             );
             setDragHeight(nextHeight);
@@ -1519,6 +1549,7 @@ export function createServerDrawerSurface(
         const endGesture = (event: unknown): void => {
             if (reorder.current) moveReorder(event);
             if (finishReorder(true)) return;
+            if (gesture.current && !gesture.current.claimed) moveGesture(event);
             const active = gesture.current;
             gesture.current = undefined;
             if (!active?.claimed) {
@@ -1527,17 +1558,11 @@ export function createServerDrawerSurface(
             }
             const y = eventCoordinate(event, "pageY") ?? active.lastY;
             const now = Date.now();
-            const finalDelta = y - active.lastY;
-            const velocity = Math.abs(finalDelta) > 0.5
-                ? finalDelta / Math.max(1, now - active.lastAt) * 1_000
-                : active.velocity;
-            const finalHeight = Math.max(
-                dockSpecs.dockHeight,
-                Math.min(drawerHeight, active.height - (y - active.y)),
-            );
-            const isDrawer = finalHeight > DRAWER_TRANSITION_HEIGHT;
-            const open = (Math.abs(velocity) > SWIPE_VELOCITY && velocity < 0)
-                || (Math.abs(velocity) < SWIPE_VELOCITY && isDrawer);
+            const distance = y - active.y;
+            const velocity = now - active.lastAt <= 120 ? active.velocity : 0;
+            const opens = distance <= -SWIPE_COMMIT_DISTANCE || (distance <= -SWIPE_DISTANCE && velocity <= -SWIPE_VELOCITY);
+            const closes = distance >= SWIPE_COMMIT_DISTANCE || (distance >= SWIPE_DISTANCE && velocity >= SWIPE_VELOCITY);
+            const open = opens || (!closes && expanded);
             setDrawerOpen(open);
         };
         const releaseReorder = (event: unknown): void => {
@@ -1654,7 +1679,6 @@ export function createServerDrawerSurface(
             }
         };
         const compactContent = <View style={{ flex: 1 }}>
-            {handle}
             <View style={{
                 alignItems: "center",
                 flexDirection: "row",
@@ -1812,7 +1836,6 @@ export function createServerDrawerSurface(
                 transform: [{ scale: overExitTarget ? 1.15 : 1 }] }}>↶</Text>
         </View>;
         const drawerContent = <View style={{ flex: 1 }}>
-            {handle}
             <View style={{ alignItems: "center", flexDirection: "row", minHeight: 50, paddingHorizontal: 12 }}>
                 {drawerFolder
                     ? <Pressable
@@ -2156,11 +2179,13 @@ export function createServerDrawerSurface(
                 style={{
                     backgroundColor: palette.background,
                     borderColor: palette.border,
-                    borderRadius: 24,
+                    borderTopLeftRadius: 24,
+                    borderTopRightRadius: 24,
                     borderWidth: 1,
-                    bottom: bottomInset,
+                    borderBottomWidth: 0,
+                    bottom: bottomInset - YOU_BAR_JOIN_DEPTH,
                     elevation: 0,
-                    height: currentHeight,
+                    height: currentHeight + YOU_BAR_JOIN_DEPTH,
                     left: panelLeft,
                     overflow: "hidden",
                     position: "absolute",
@@ -2168,7 +2193,23 @@ export function createServerDrawerSurface(
                     zIndex: 0,
                 }}
             >
-                {drawerVisible ? drawerContent : compactContent}
+                <View style={{ height: currentHeight, overflow: "hidden" }}>
+                    {handle}
+                    <View pointerEvents={expanded ? "none" : "auto"}
+                        accessibilityElementsHidden={drawerVisible} importantForAccessibility={drawerVisible ? "no-hide-descendants" : "auto"}
+                        style={{ position: "absolute", top: 16, left: 0, right: 0, height: dockSpecs.dockHeight - 16,
+                            backgroundColor: palette.background, backfaceVisibility: "hidden", zIndex: 2,
+                            opacity: roll < 1 ? 1 : 0, transformOrigin: "center top", transform: [{ perspective: 900 }, { rotateX: `${-90 * roll}deg` }] }}>
+                        {compactContent}
+                    </View>
+                    <View pointerEvents={expanded ? "auto" : "none"}
+                        accessibilityElementsHidden={!drawerVisible} importantForAccessibility={drawerVisible ? "auto" : "no-hide-descendants"}
+                        style={{ position: "absolute", top: 16 + rollSeam, left: 0, right: 0, height: roll < 1 ? compactFaceHeight : drawerHeight - 16,
+                            backgroundColor: palette.background, backfaceVisibility: "hidden", zIndex: 1,
+                            opacity: roll > 0 ? 1 : 0, transformOrigin: "center top", transform: [{ perspective: 900 }, { rotateX: `${90 * (1 - roll)}deg` }] }}>
+                        <View style={{ height: drawerHeight - 16 }}>{drawerContent}</View>
+                    </View>
+                </View>
             </View>
             {floatingPreview}
             {draggingId?.startsWith("servers:") && reorder.current?.sourceFolderId && (drawerFolder || overlayFolder)

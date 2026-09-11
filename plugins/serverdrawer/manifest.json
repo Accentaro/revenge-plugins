@@ -4,7 +4,7 @@
     "name": "ServerDrawer",
     "description": "A compact server dock with a searchable server and DM drawer, folders, and drag and drop.",
     "author": "kmmiio99o, Rosie, Benjii",
-    "version": "1.0.2",
+    "version": "1.0.9",
     "dependencies": {
         "revenge.api": {
             "version": ">=1 <2"
