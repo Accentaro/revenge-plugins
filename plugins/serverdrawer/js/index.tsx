@@ -1,149 +1,98 @@
-import { lookupGeneratedIconComponent } from "@revenge-mod/utils/discord";
 import { after } from "@revenge-mod/patcher";
 import { ReactJSXRuntime } from "@revenge-mod/react";
-import * as Runtime from "@revenge-mod/react";
-import { findByProps } from "./metro";
-import { createController } from "./controller";
-import { replaceReactElementType, transformLeftPanelContent } from "./layout";
-import { createGuildMenu } from "./menu";
-import { createPreferences } from "./storage";
-import { initializeTheme } from "./theme";
-import { createServerDrawerSurface } from "./surface";
-import { computeGuildDockSpecs } from "./model";
+import { withStoreName } from "@revenge-mod/discord/flux";
+import { lookupModule, lookupModules } from "@revenge-mod/modules/finders";
+import { withDependencies, withName, withProps } from "@revenge-mod/modules/finders/filters";
+import { getJsonStorage, pluginStoragePathFor } from "@revenge-mod/json-storage";
 import React from "react";
 import * as Native from "react-native";
-let dispose: (() => void) | undefined;
+import { createServerDrawerSurface } from "./surface";
+import type * as t from "./types";
+
+function findModule<T extends object>(filter: ReturnType<typeof withProps<T>>) {
+    const found = lookupModule(filter, { cached: false })[0];
+    if (found) return found;
+    for (const [, id] of lookupModules(withStoreName("SortedGuildStore").or(withStoreName("GuildStore")).or(withStoreName("UserSettingsProtoStore")), { cached: false })) {
+        const dependency = withDependencies.unordered([id]);
+        for (const pattern of [dependency, withDependencies.unordered([dependency])]) {
+            const result = lookupModule(withDependencies(pattern).and(filter), { cached: false })[0];
+            if (result) return result;
+        }
+    }
+    throw new Error(`ServerDrawer: native module unavailable (${filter.key})`);
+}
+
+export function findByProps<K extends keyof t.NativeExports>(first: K, ...props: K[]) {
+    return findModule(withProps<Pick<t.NativeExports, K>>(first, ...props));
+}
+
+export function findByName<K extends keyof t.NativeExports>(name: K) {
+    return findModule(withName<t.NativeExports[K] & object>(name));
+}
+
+export const preferences = getJsonStorage<t.ServerDrawerPreferences>(pluginStoragePathFor("dev.rain.serverdrawer"), { default: { dmOrder: [], layout: "grid" } });
+
+export function reportActionFailure(operation: string, error: unknown): void {
+    console.error(`[ServerDrawer] ${operation} failed`, error);
+    Native.ToastAndroid.show(`Could not ${operation}. Please try again.`, Native.ToastAndroid.LONG);
+}
+
 export default plugin({
-    async start({ cleanup }) {
-        dispose?.();
-        let stopped = false;
-        let stopCurrent = () => { stopped = true; };
-        cleanup(() => stopCurrent());
-        const preferences = await createPreferences();
-        if (stopped) return;
-        let abort: AbortController | undefined;
-        let DrawerSurface: React.ComponentType<any>;
+    start({ cleanup }) {
+        const abort = new AbortController();
+        cleanup(() => abort.abort());
+        const loaded = preferences.get();
+
+        let DrawerSurface: React.ComponentType<t.ServerDrawerSurfaceProps>;
         let useInset: () => number;
-        const initialize = () => {
-            const inset = findByProps("useYouBarTotalHeight");
-            if (typeof inset?.useYouBarTotalHeight !== "function") return false;
-            initializeTheme();
-            const controller = createController();
-            const ChatIcon = lookupGeneratedIconComponent("ChatIcon");
-            if (typeof ChatIcon !== "function") throw new Error("ServerDrawer: native DM icon is unavailable");
-            abort = new AbortController();
-            const Surface = createServerDrawerSurface({
-                react: Runtime.React,
-                reactNative: Runtime.ReactNative,
-                components: { TextInput: Native.TextInput, ChatIcon },
-                modules: { findByProps },
-                useGuildMenu: createGuildMenu(),
-            }, controller, preferences, abort.signal);
-            if (!Surface) throw new Error("ServerDrawer: native surface components are unavailable");
-            useInset = inset.useYouBarTotalHeight;
-            DrawerSurface = Surface;
-            return true;
-        };
-        const wrappers = new WeakMap<(props: any) => any, React.ComponentType<any>>();
-        const listeners = new Set<() => void>();
-        let active = true;
-        let initializationError: string | undefined;
-        function DockLayout({ rendered }: { rendered: any }) {
+
+        const useActive = () => React.useSyncExternalStore(listener => {
+            abort.signal.addEventListener("abort", listener);
+
+            return () => abort.signal.removeEventListener("abort", listener);
+        }, () => !abort.signal.aborted);
+
+        function YouBarBackdrop({ element }: t.ElementProps) {
             const height = useInset();
-            const bottomInset = Math.max(0, Number.isFinite(height) ? height : 0);
-            const dimensions = Native.useWindowDimensions();
-            const [width, setWidth] = React.useState(dimensions.width);
-            return transformLeftPanelContent(rendered, <DrawerSurface key="rain-server-drawer" bottomInset={bottomInset} onWidthChange={setWidth} />,
-                bottomInset + computeGuildDockSpecs(Math.max(80, width - 16)).dockHeight - 6,
-                rail => <Native.View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" pointerEvents="none"
-                    style={{ height: 1, width: 1, position: "absolute", left: -10000, opacity: 0 }}>
-                    {rail as any}
-                </Native.View>) as any ?? rendered;
+            const active = useActive();
+
+            return active ? <Native.View pointerEvents="none" style={{ position: "absolute", bottom: 0, left: 0, right: 0, height, overflow: "hidden" }}>{element}</Native.View> : element;
         }
-        function YouBarBackdrop({ component, properties }: { component: any; properties: any }) {
-            const height = useInset();
-            return <Native.View pointerEvents="none" style={{ position: "absolute", bottom: 0, left: 0, right: 0,
-                height: Math.max(0, Number.isFinite(height) ? height : 0), overflow: "hidden" }}>
-                {React.createElement(component, properties)}
-            </Native.View>;
-        }
-        const shadeWrappers = new WeakMap<object, React.ComponentType<any>>();
-        const onShade = (Original: any, element: any) => {
-            const target = typeof Original === "function" ? Original : Original?.type ?? Original?.render;
-            if (typeof target !== "function") return element;
-            let Wrapper = shadeWrappers.get(Original);
-            if (!Wrapper) {
-                Wrapper = function ServerDrawerYouBarShade(props: any) {
-                    const [, refresh] = React.useReducer(value => value + 1, 0);
-                    React.useEffect(() => {
-                        listeners.add(refresh);
-                        return () => { listeners.delete(refresh); };
-                    }, []);
-                    return active && DrawerSurface ? <YouBarBackdrop component={Original} properties={props} /> : React.createElement(Original, props);
-                };
-                shadeWrappers.set(Original, Wrapper);
-            }
-            return replaceReactElementType(element, Wrapper) ?? element;
-        };
-        // LeftPanelContent is a private, unexported function; intercept its named JSX creation.
-        const onPanel = (Original: any, element: any) => {
-            if (typeof Original !== "function" || Original.prototype?.isReactComponent || element.type !== Original) return element;
-            let Wrapper = wrappers.get(Original);
-            if (!Wrapper) {
-                Wrapper = function ServerDrawerLeftPanel(props: any) {
-                    const rendered = Original(props);
-                    const [, refresh] = React.useReducer(value => value + 1, 0);
-                    React.useEffect(() => {
-                        listeners.add(refresh);
-                        return () => { listeners.delete(refresh); };
-                    }, []);
-                    React.useEffect(() => {
-                        if (!active || DrawerSurface) return;
-                        const tryInitialize = () => {
-                            if (!active || DrawerSurface) return true;
-                            try {
-                                if (!initialize()) return false;
-                                listeners.forEach(notify => notify());
-                                return true;
-                            } catch (error) {
-                                const message = String(error);
-                                if (message !== initializationError) console.error(`[ServerDrawer] ${message}`);
-                                initializationError = message;
-                                return false;
-                            }
+
+        function ServerDrawerLeftPanel({ element }: t.ElementProps) {
+            const rendered = (element.type as t.PanelComponent)(element.props);
+            const active = useActive();
+            const [ready, setReady] = React.useState(!!DrawerSurface);
+
+            React.useEffect(() => {
+                loaded.then(() => {
+                    if (abort.signal.aborted) return;
+                    if (!DrawerSurface) {
+                        const inset = findByProps("useYouBarTotalHeight");
+                        const width = lookupModule(withName<() => number>("useChannelListWidth"), { returnNamespace: true, cached: false })[0];
+                        const { DM_WIDTH } = findByProps("DM_WIDTH");
+                        if (typeof inset?.useYouBarTotalHeight !== "function" || !width || !("default" in width) || typeof width.default !== "function" || !Number.isFinite(DM_WIDTH)) throw new Error("Native panel layout is unavailable");
+                        useInset = () => {
+                            const height = inset.useYouBarTotalHeight();
+                            return Math.max(0, Number.isFinite(height) ? height : 0);
                         };
-                        if (tryInitialize()) return;
-                        const timer = setInterval(() => { if (tryInitialize()) clearInterval(timer); }, 250);
-                        return () => clearInterval(timer);
-                    }, []);
-                    return active && DrawerSurface ? <DockLayout rendered={rendered} /> : rendered;
-                };
-                wrappers.set(Original, Wrapper);
-            }
-            return replaceReactElementType(element, Wrapper) as any ?? element;
-        };
-        for (const key of ["jsx", "jsxs"] as const) {
-            if (typeof ReactJSXRuntime[key] !== "function") throw new Error(`ServerDrawer: JSX runtime ${key} is unavailable`);
+                        DrawerSurface = createServerDrawerSurface(abort.signal, useInset);
+                        cleanup(after(width, "default", (value: number) => value + DM_WIDTH));
+                    }
+                    setReady(true);
+                }).catch(error => console.error("[ServerDrawer] Initialization failed", error));
+            }, []);
+
+            return active && ready ? <DrawerSurface panel={rendered} /> : rendered;
         }
-        const unpatches: (() => unknown)[] = [];
-        dispose = stopCurrent = () => {
-            active = false;
-            unpatches.splice(0).reverse().forEach(unpatch => unpatch());
-            abort?.abort();
-            listeners.forEach(refresh => refresh());
-            listeners.clear();
-            dispose = undefined;
-        };
-        try {
-            for (const key of ["jsx", "jsxs"] as const) {
-                unpatches.push(after(ReactJSXRuntime, key, element => {
-                    const Original: any = element?.type;
-                    const name = Original?.displayName ?? Original?.name ?? Original?.type?.name ?? Original?.render?.name;
-                    if (name === "YouBarFloatingShade") return onShade(Original, element);
-                    return typeof Original === "function" && Original.name === "LeftPanelContent" ? onPanel(Original, element) : element;
-                }));
-            }
-        } catch (error) { dispose?.(); throw error; }
+
+        for (const key of ["jsx", "jsxs"] as const) cleanup(after(ReactJSXRuntime, key, result => {
+            const element = result as t.PanelElement;
+            const type = element?.type as React.MemoExoticComponent<React.ComponentType>;
+            if (DrawerSurface && type?.type?.name === "YouBarFloatingShade") return <YouBarBackdrop element={element} />;
+
+            return typeof element?.type === "function" && element.type.name === "LeftPanelContent"
+                ? <ServerDrawerLeftPanel key={element.key} element={element} /> : element;
+        }));
     },
-    stop() { dispose?.(); },
 });

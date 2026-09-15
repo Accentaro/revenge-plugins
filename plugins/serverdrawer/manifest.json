@@ -1,10 +1,10 @@
 {
     "format": 1,
-    "id": "dev.rain.serverdrawer",
     "name": "ServerDrawer",
+    "id": "dev.rain.serverdrawer",
     "description": "A compact server dock with a searchable server and DM drawer, folders, and drag and drop.",
     "author": "kmmiio99o, Rosie, Benjii",
-    "version": "1.0.9",
+    "version": "1.0.10",
     "dependencies": {
         "revenge.api": {
             "version": ">=1 <2"

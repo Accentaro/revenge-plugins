@@ -1,2219 +1,768 @@
-import type { DropBounds, } from "./dropTarget";
-import { hitsDropTarget } from "./dropTarget";
-import { reportActionFailure } from "./errors";
-import type {
-    CompactDockItem,
-    DrawerFolder,
-    DrawerGuild,
-    DrawerNode,
-    GuildMetadata,
-    GuildReadState,
-} from "./model";
-import {
-    buildCompactDockItems,
-    computeGuildDockSpecs,
-    guildsInTreeOrder,
-    parseGuildTree,
-} from "./model";
-import { usePalette } from "./theme";
-import type { HostComponent, Preferences, SurfaceApi, Unpatch } from "./types";
-const DRAWER_ICON_SIZE = 52;
-const DRAWER_ITEM_WIDTH = DRAWER_ICON_SIZE + 12;
-const DRAWER_GAP = 12;
-const DRAWER_SIDE_PADDING = 16;
-const DRAWER_MIN_HEIGHT = 400;
-const DRAWER_MAX_HEIGHT = 832;
-const DRAWER_MIN_INSET = 32;
-const DRAWER_REVEAL_DISTANCE = 120;
-const YOU_BAR_JOIN_DEPTH = 24;
-const DOCK_REST_OFFSET = 6;
-const REORDER_LONG_PRESS_MS = 500;
-const SWIPE_DISTANCE = 12;
-const SWIPE_COMMIT_DISTANCE = 24;
-const SWIPE_VELOCITY = 200;
-export type DrawerLayout = "grid" | "list";
-export type DrawerView = "dms" | "servers";
-export interface ServerDrawerPreferences {
-    readonly dmOrder: readonly string[];
-    readonly layout: DrawerLayout;
-    readonly serverOrder: readonly string[];
+import { cloneElement, Fragment, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import * as Native from "react-native";
+import { getAssetIdByName as findAssetId } from "@revenge-mod/assets";
+import { Stores } from "@revenge-mod/discord/flux";
+import { FlashList as ShopifyFlashList } from "@revenge-mod/externals/shopify";
+import { Tokens } from "@revenge-mod/discord/common/tokens";
+import { findByName, findByProps, preferences, reportActionFailure } from "./index";
+import type * as t from "./types";
+
+export const DOCK_PADDING = 40;
+export const DOCK_ITEM_GAP = 10;
+export const DOCK_REST_OFFSET = 6;
+
+// Preserve the dock's 48px target and five-to-seven slot sizing rule.
+export function computeGuildDockSpecs(availableWidth: number) {
+    const dockWidth = Math.max(80, Math.min(454, (Number.isFinite(availableWidth) ? Math.max(0, availableWidth) : 0) - 16));
+    const scaleFor = (count: number) => (dockWidth - DOCK_ITEM_GAP * (count - 1) - DOCK_PADDING) / (48 * count);
+
+    const itemCount = [6, 7].reduce((best, count) => Math.abs(1 - scaleFor(count)) < Math.abs(1 - scaleFor(best)) ? count : best, 5);
+    const itemSize = Math.max(1, Math.round(48 * scaleFor(itemCount)));
+
+    return { dockHeight: itemSize + 32, dockWidth, itemCountNoExtras: itemCount - 2, itemSize };
 }
-export interface DirectMessageMetadata {
-    readonly avatarUri?: string;
-    readonly id: string;
-    readonly name: string;
-}
-export interface ServerDrawerSnapshot {
-    readonly privateChannels?: readonly DirectMessageMetadata[];
-    readonly selectedPrivateChannelId?: string;
-    readonly selectedGuildId?: string;
-    readonly tree: unknown;
-    readonly unavailableGuildCount?: number;
-}
-export interface ServerDrawerController {
-    addBackHandler?(listener: () => boolean): Unpatch | undefined;
-    animateNext?(durationMs?: number): void;
-    haptic?(kind?: "light" | "medium" | "soft"): void;
-    moveGuild?(sourceId: string, targetId: string): boolean;
-    dropGuild?(sourceId: string, targetId: string): boolean;
-    removeGuildFromFolder?(sourceId: string, folderId: string): boolean;
-    renameFolder?(folderId: string, name: string): boolean;
-    openCreateDm?(): boolean;
-    openCreateGuild?(): boolean;
-    readPrivateChannelState?(channelId: string): GuildReadState | undefined;
-    readState(guildId: string): GuildReadState | undefined;
-    resolveGuild(guildId: string): GuildMetadata | undefined;
-    selectGuild(guildId: string): boolean;
-    selectPrivateChannel?(channelId: string): boolean;
-    snapshot(): ServerDrawerSnapshot;
-    subscribe(listener: () => void): Unpatch;
-    readonly FlatList?: HostComponent | undefined;
-}
-interface ReactHooks {
-    useCallback<Callback extends (...arguments_: never[]) => unknown>(callback: Callback, dependencies: readonly unknown[]): Callback;
-    useEffect(effect: () => void | Unpatch, dependencies: readonly unknown[]): void;
-    useMemo<Value>(factory: () => Value, dependencies: readonly unknown[]): Value;
-    useRef<Value>(value: Value): { current: Value };
-    useState<Value>(value: Value | (() => Value)): [Value, (next: Value | ((previous: Value) => Value)) => void];
-}
-interface GestureState {
-    claimed: boolean;
-    readonly height: number;
-    lastAt: number;
-    lastY: number;
-    velocity: number;
-    readonly x: number;
-    readonly y: number;
-}
-interface DragPoint {
-    readonly x: number;
-    readonly y: number;
-}
-interface NativeDragPreview {
-    setNativeProps?(properties: Readonly<Record<string, unknown>>): void;
-}
-interface ReorderState {
-    readonly columnStep: number;
-    readonly columns: number;
-    readonly ids: readonly string[];
-    readonly initialOrder: readonly string[];
-    readonly layout: DrawerLayout;
-    readonly rowStep: number;
-    readonly sourceId: string;
-    readonly sourceIndex: number;
-    readonly startX: number;
-    readonly startY: number;
-    targetId: string;
-    mergeSince?: number;
-    moved?: boolean;
-    readonly sourceFolderId?: string;
-    removeFromFolder?: boolean;
-    readonly view: DrawerView;
-}
-interface DirectMessage extends DirectMessageMetadata {
-    readonly mentionLabel: string | undefined;
-    readonly mentions: number;
-    readonly unread: boolean;
-}
-interface NativeEventRecord {
-    readonly nativeEvent?: {
-        readonly absoluteX?: unknown;
-        readonly absoluteY?: unknown;
-        readonly contentOffset?: { readonly y?: unknown };
-        readonly layout?: { readonly height?: unknown; readonly width?: unknown };
-        readonly pageX?: unknown;
-        readonly pageY?: unknown;
-    };
-}
-interface NativeGestureBuilder {
-    activateAfterLongPress?(duration: number): NativeGestureBuilder;
-    minDistance?(distance: number): NativeGestureBuilder;
-    onEnd?(listener: (event: unknown) => void): NativeGestureBuilder;
-    onFinalize?(listener: (event: unknown) => void): NativeGestureBuilder;
-    onStart?(listener: (event: unknown) => void): NativeGestureBuilder;
-    onTouchesCancelled?(listener: (event: unknown) => void): NativeGestureBuilder;
-    onTouchesUp?(listener: (event: unknown) => void): NativeGestureBuilder;
-    onUpdate?(listener: (event: unknown) => void): NativeGestureBuilder;
-    runOnJS?(enabled: boolean): NativeGestureBuilder;
-    shouldCancelWhenOutside?(enabled: boolean): NativeGestureBuilder;
-}
-interface NativeGestureFactory {
-    Pan?(): NativeGestureBuilder;
-}
-const EMPTY_SNAPSHOT: ServerDrawerSnapshot = Object.freeze({ tree: undefined });
-function finite(value: unknown, fallback = 0): number {
-    return typeof value === "number" && Number.isFinite(value) ? value : fallback;
-}
-function eventCoordinate(event: unknown, axis: "pageX" | "pageY"): number | undefined {
-    const nativeEvent = (event as NativeEventRecord | undefined)?.nativeEvent
-        ?? event as NativeEventRecord["nativeEvent"];
-    const value = nativeEvent?.[axis]
-        ?? nativeEvent?.[axis === "pageX" ? "absoluteX" : "absoluteY"];
-    return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-function eventWidth(event: unknown): number | undefined {
-    const value = (event as NativeEventRecord | undefined)?.nativeEvent?.layout?.width;
-    return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
-}
-function eventHeight(event: unknown): number | undefined {
-    const value = (event as NativeEventRecord | undefined)?.nativeEvent?.layout?.height;
-    return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
-}
-function scrollOffset(event: unknown): number {
-    return Math.max(0, finite((event as NativeEventRecord | undefined)?.nativeEvent?.contentOffset?.y));
-}
-function horizontalScrollOffset(event: unknown): number {
-    const value = (event as { nativeEvent?: { contentOffset?: { x?: unknown } } } | undefined)
-        ?.nativeEvent?.contentOffset?.x;
-    return Math.max(0, finite(value));
-}
-function changedText(value: unknown): string | undefined {
-    if (typeof value === "string") return value;
-    const text = (value as { nativeEvent?: { text?: unknown } } | undefined)?.nativeEvent?.text;
-    return typeof text === "string" ? text : undefined;
-}
-function normalizedLayout(value: unknown): DrawerLayout {
-    return value === "list" ? "list" : "grid";
-}
-function normalizedOrder(value: unknown): readonly string[] {
-    if (!Array.isArray(value)) return Object.freeze([]);
-    return Object.freeze([...new Set(value.filter((entry): entry is string => (
-        typeof entry === "string" && entry.length > 0
-    )))]);
-}
-function orderedByIds<Item extends { readonly id: string }>(
-    items: readonly Item[],
-    order: readonly string[],
-): readonly Item[] {
-    if (items.length < 2 || order.length === 0) return items;
-    const ranks = new Map(order.map((id, index) => [id, index]));
-    return Object.freeze(items.map((item, index) => ({ index, item })).sort((left, right) => {
-        const leftRank = ranks.get(left.item.id);
-        const rightRank = ranks.get(right.item.id);
-        if (leftRank === undefined && rightRank === undefined) return left.index - right.index;
-        if (leftRank === undefined) return 1;
-        if (rightRank === undefined) return -1;
-        return leftRank - rightRank;
-    }).map(entry => entry.item));
-}
-function orderedNodes(nodes: readonly DrawerNode[], order: readonly string[]): readonly DrawerNode[] {
-    return orderedByIds(nodes.map(node => node.kind === "folder"
-        ? Object.freeze({ ...node, children: orderedByIds(node.children, order) })
-        : node), order);
-}
-function nodeIds(nodes: readonly DrawerNode[]): readonly string[] {
-    return Object.freeze(nodes.flatMap(node => node.kind === "folder"
-        ? [node.id, ...node.children.map(child => child.id)]
-        : [node.id]));
-}
-function movedOrder(
-    order: readonly string[],
-    availableIds: readonly string[],
-    sourceId: string,
-    targetId: string,
-): readonly string[] {
-    const available = new Set(availableIds);
-    const next = [...order.filter(id => available.has(id))];
-    for (const id of availableIds) if (!next.includes(id)) next.push(id);
-    const sourceIndex = next.indexOf(sourceId);
-    const targetIndex = next.indexOf(targetId);
-    if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) return order;
-    next.splice(sourceIndex, 1);
-    next.splice(targetIndex, 0, sourceId);
-    return Object.freeze(next);
-}
-function nativeDimension(
-    native: Readonly<Record<string, unknown>> | undefined,
-    axis: "height" | "width",
-    fallback: number,
-): number {
-    try {
-        const dimensions = native?.Dimensions as { get?: (name: string) => unknown } | undefined;
-        const window = dimensions?.get?.("window") as Readonly<Record<string, unknown>> | undefined;
-        const value = window?.[axis];
-        return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
-    } catch {
-        return fallback;
+
+export function createServerDrawerSurface(signal: AbortSignal, useInset: () => number) {
+    const { ChannelStore, GuildReadStateStore, GuildStore, PrivateChannelSortStore, ReadStateStore, SelectedChannelStore, SelectedGuildStore, SortedGuildStore, UserGuildSettingsStore, UserStore } = Stores as unknown as t.NativeStores;
+    const { createStyles } = findByProps("createStyles");
+    const { useToken } = findByProps("useToken");
+    const FluxUtils = findByProps("useStateFromStores");
+    const contextMenu = findByProps("showContextMenu", "hideContextMenu", "useContextMenuState", "ContextMenuStore");
+    const ContextMenu = findByProps("ContextMenu").ContextMenu as React.ComponentType<t.ContextMenuProps>;
+    const { FlashList } = ShopifyFlashList;
+    const semanticColors = Tokens.default.colors;
+    const rawColors = Tokens.RawColor;
+    const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+
+    const BORDER_WIDTH = 1;
+    const ICON_SIZE = 52;
+    const ITEM_WIDTH = ICON_SIZE + 12;
+    const ITEM_GAP = 12;
+    const SIDE_PADDING = 16;
+    const YOU_BAR_JOIN_DEPTH = 24;
+    const LONG_PRESS_MS = 500;
+    const SWIPE_DISTANCE = 12;
+    const CENTER = { alignItems: "center", justifyContent: "center" } as const;
+    const ROW = { alignItems: "center", flexDirection: "row" } as const;
+    const EMPTY_SNAPSHOT: t.ServerDrawerSnapshot = Object.freeze({ nodes: [], directMessages: [] });
+
+    const useStyles = createStyles({
+        mentionBadge: { ...CENTER, backgroundColor: semanticColors.STATUS_DANGER, borderColor: semanticColors.BACKGROUND_BASE_LOWEST,
+            borderRadius: 10, borderWidth: 2, paddingHorizontal: 4, position: "absolute" },
+        unreadBadge: { backgroundColor: semanticColors.TEXT_DEFAULT, borderColor: semanticColors.BACKGROUND_BASE_LOWEST, borderRadius: 7,
+            borderWidth: 2, position: "absolute" },
+        compactSelection: { borderColor: semanticColors.TEXT_MUTED, borderWidth: 3, bottom: -3, left: -3, position: "absolute", right: -3, top: -3 },
+        listItem: { alignItems: "center", borderRadius: 12, flexDirection: "row", gap: 14, minHeight: 68, paddingHorizontal: 10, width: "100%" },
+        gridItem: { alignItems: "center", minHeight: 82, width: ITEM_WIDTH },
+        selectionRing: { ...CENTER, borderWidth: 3, height: 62, width: 62 },
+        gridLabel: { fontSize: 11, marginTop: 4, textAlign: "center", width: 68 },
+        previewFrame: { alignItems: "center", backgroundColor: semanticColors.BACKGROUND_SECONDARY_ALT,
+            borderColor: semanticColors.BORDER_SUBTLE, borderWidth: 1, elevation: 18, shadowColor: rawColors.BLACK,
+            shadowOffset: { height: 8, width: 0 }, shadowRadius: 12 },
+        listPreview: { borderRadius: 14, flexDirection: "row", gap: 14, height: 68, paddingHorizontal: 10, shadowOpacity: 0.35 },
+        gridPreview: { borderRadius: 20, minHeight: 82, paddingTop: 5, shadowOpacity: 0.4, width: ITEM_WIDTH },
+        folderInput: { color: semanticColors.TEXT_DEFAULT, fontSize: 20, padding: 4, borderBottomWidth: 1, borderColor: semanticColors.TEXT_BRAND },
+        folderTitle: { color: semanticColors.TEXT_DEFAULT, fontSize: 20, fontWeight: "700" },
+        dmButton: { ...CENTER, backgroundColor: semanticColors.BACKGROUND_SECONDARY_ALT, borderRadius: 16 },
+        dockDivider: { alignSelf: "center", backgroundColor: semanticColors.BORDER_SUBTLE, marginHorizontal: -5.5, width: 1 },
+        dockRow: { ...ROW, gap: DOCK_ITEM_GAP, paddingHorizontal: DOCK_PADDING / 2 },
+        emptyContainer: { ...CENTER, minHeight: 180, padding: 24 },
+        emptyText: { color: semanticColors.TEXT_DEFAULT, fontSize: 17, fontWeight: "600", textAlign: "center" },
+        header: { ...ROW, minHeight: 50, paddingHorizontal: 12 },
+        viewTabs: { backgroundColor: semanticColors.BACKGROUND_BASE_LOWER, borderRadius: 10, flex: 1, flexDirection: "row", padding: 3 },
+        viewTab: { ...CENTER, borderRadius: 8, flex: 1, minHeight: 36, paddingHorizontal: 5 },
+        searchRow: { gap: 10, paddingHorizontal: 14, paddingVertical: 10 },
+        searchInput: { backgroundColor: semanticColors.BACKGROUND_BASE_LOWER, color: semanticColors.TEXT_DEFAULT, minHeight: 42,
+            paddingHorizontal: 12, borderRadius: 8 },
+        filterTabs: { backgroundColor: semanticColors.BACKGROUND_BASE_LOWER, borderRadius: 9, flexDirection: "row", padding: 3 },
+        filterTab: { ...CENTER, borderRadius: 7, flex: 1, minHeight: 36 },
+        handle: { ...CENTER, height: 16, width: "100%" },
+        handleBar: { backgroundColor: semanticColors.TEXT_MUTED, borderRadius: 3, height: 5, opacity: 0.5, width: 38 },
+        exitTarget: { ...CENTER, width: 56, height: 56, position: "absolute", zIndex: 110, elevation: 65 },
+        folderBackdrop: { alignItems: "center", bottom: 0, justifyContent: "center", left: 0, position: "absolute", right: 0, top: 0, zIndex: 60 },
+        folderPanel: { alignItems: "center", backgroundColor: semanticColors.BACKGROUND_SECONDARY_ALT, borderRadius: 40, elevation: 45, overflow: "hidden" },
+        folderPage: { alignContent: "flex-start", ...ROW, flexWrap: "wrap", gap: 8, paddingBottom: 28, paddingHorizontal: 10, paddingTop: 52 },
+        folderHeading: { position: "absolute", top: 8, left: 20, right: 20 },
+        pageDots: { alignItems: "center", bottom: 8, flexDirection: "row", gap: 5, justifyContent: "center", position: "absolute" },
+        pageDot: { borderRadius: 3, height: 7, marginHorizontal: 4, marginVertical: 10, width: 7 },
+        dragPreview: { elevation: 60, position: "absolute", top: 0, zIndex: 100 },
+        drawerBackdrop: { bottom: 0, left: 0, position: "absolute", right: 0, top: 0, zIndex: 0 },
+        drawerPanel: { backgroundColor: semanticColors.BACKGROUND_BASE_LOWEST, borderColor: semanticColors.BORDER_SUBTLE,
+            borderTopLeftRadius: 24, borderTopRightRadius: 24, borderWidth: BORDER_WIDTH, borderBottomWidth: 0,
+            elevation: 0, overflow: "hidden", position: "absolute", zIndex: 0 },
+        compactFace: { position: "absolute", top: 16, left: 0, right: 0, backgroundColor: semanticColors.BACKGROUND_BASE_LOWEST,
+            backfaceVisibility: "hidden", zIndex: 2, transformOrigin: "center top" },
+        expandedFace: { position: "absolute", left: 0, right: 0, backgroundColor: semanticColors.BACKGROUND_BASE_LOWEST,
+            backfaceVisibility: "hidden", zIndex: 1, transformOrigin: "center top" },
+    });
+
+    function getDrawerGeometry(width: number, height: number, layout: t.DrawerLayout) {
+        const dockSpecs = computeGuildDockSpecs(width - 16);
+        const grid = layout === "grid";
+        const contentWidth = dockSpecs.dockWidth - SIDE_PADDING * 2;
+        const columns = grid ? Math.max(3, Math.floor((contentWidth + ITEM_GAP) / (ITEM_WIDTH + ITEM_GAP))) : 1;
+        const columnStep = grid ? Math.max(ITEM_WIDTH + ITEM_GAP, (contentWidth - ITEM_WIDTH) / (columns - 1)) : ITEM_WIDTH;
+        const previewWidth = grid ? ITEM_WIDTH : Math.max(1, dockSpecs.dockWidth - 20);
+        const previewTransform = (point: t.DragPoint): NonNullable<Native.ViewStyle["transform"]> => grid
+            ? [{ translateX: point.x - previewWidth / 2 }, { translateY: point.y - 48 }, { scale: 1.07 }]
+            : [{ translateY: point.y - 41 }, { scale: 1.025 }];
+
+        return { dockSpecs, grid, columns, columnStep, previewWidth, previewTransform,
+            // FlashList owns equal-width cells; offset their contents to preserve the drag column step.
+            columnOffset: grid ? columnStep - (contentWidth - BORDER_WIDTH * 2) / columns : 0,
+            drawerHeight: clamp(height - 32, dockSpecs.dockHeight, 832), panelLeft: Math.max(0, Math.round((width - dockSpecs.dockWidth) / 2)) };
     }
-}
-function component(value: unknown): HostComponent | undefined {
-    try {
-        return typeof value === "function"
-            || (typeof value === "object" && value !== null && "$$typeof" in value)
-            ? value as HostComponent
-            : undefined;
-    } catch {
-        return undefined;
+
+    function Icon({ name, color, size = 24, label, onPress, buttonSize = 44 }: t.IconProps) {
+        const image = <Native.Image source={findAssetId(name)} style={{ width: size, height: size, tintColor: color }} />;
+
+        return label ? <Native.Pressable accessibilityLabel={label} accessibilityRole="button" onPress={onPress}
+            style={{ ...CENTER, height: buttonSize, width: buttonSize }}>{image}</Native.Pressable> : image;
     }
-}
-function initials(name: string): string {
-    const pieces = name.trim().split(/\s+/u).filter(Boolean);
-    return pieces.slice(0, 2).map(piece => piece[0] ?? "").join("").toUpperCase() || "?";
-}
-function iconUri(guild: DrawerGuild): string | undefined {
-    if (!guild.icon) return undefined;
-    if (/^https:\/\//iu.test(guild.icon)) return guild.icon;
-    const extension = guild.icon.startsWith("a_") ? "gif" : "webp";
-    return "https://cdn.discordapp.com/icons/"
-        + encodeURIComponent(guild.id) + "/"
-        + encodeURIComponent(guild.icon) + "."
-        + extension + "?size=128";
-}
-function folderColor(value: number | undefined, fallback: string): string {
-    return value === undefined ? fallback : `#${value.toString(16).padStart(6, "0")}`;
-}
-function normalizedQuery(value: string): string {
-    return value.trim().toLocaleLowerCase();
-}
-function filteredNodes(
-    nodes: readonly DrawerNode[],
-    filter: "all" | "unread",
-    query: string,
-    folder?: DrawerFolder,
-): readonly DrawerNode[] {
-    const search = normalizedQuery(query);
-    const source: readonly DrawerNode[] = folder?.children ?? nodes;
-    if (search) {
-        return Object.freeze(guildsInTreeOrder(source).filter(guild => (
-            guild.name.toLocaleLowerCase().includes(search)
-            && (filter === "all" || guild.unread)
-        )));
+
+    function orderedDms(items: readonly t.DirectMessage[], order: unknown): readonly t.DirectMessage[] {
+        const rank = new Map<string, number>();
+        for (const [index, id] of (Array.isArray(order) ? order : []).entries()) if (!rank.has(id)) rank.set(id, index);
+
+        return [...items].sort((a, b) => (rank.get(a.id) ?? Infinity) - (rank.get(b.id) ?? Infinity));
     }
-    if (filter === "all") return source;
-    const unread: DrawerNode[] = [];
-    for (const node of source) {
-        if (node.kind === "guild") {
-            if (node.unread) unread.push(node);
-            continue;
-        }
-        const children = node.children.filter(child => child.unread);
-        if (children.length === 0) continue;
-        unread.push(Object.freeze({ ...node, children: Object.freeze(children) }));
+
+    const initials = (name: string) => name.trim().split(/\s+/u).slice(0, 2).map(piece => piece[0]).join("").toUpperCase() || "?";
+
+    function filteredItems(items: readonly t.DrawerItem[], filter: "all" | "unread", query: string): readonly t.DrawerItem[] {
+        const search = query.trim().toLocaleLowerCase();
+        if (!search && filter === "all") return items;
+
+        const matches = (item: t.DrawerGuild | t.DirectMessage) => (!search || item.name.toLocaleLowerCase().includes(search)) && (filter === "all" || item.unread);
+
+        return items.flatMap<t.DrawerItem>(item => {
+            if (item.kind !== "folder") return matches(item) ? [item] : [];
+            const children = item.children.filter(matches);
+
+            return search ? children : children.length ? [{ ...item, children }] : [];
+        });
     }
-    return Object.freeze(unread);
-}
-function once(cleanup: Unpatch): Unpatch {
-    let cleaned = false;
-    return () => {
-        if (cleaned) return;
-        cleaned = true;
+
+    const iconUtils = findByProps("getGuildIconURL", "getChannelIconURL");
+    const actions = findByProps("moveById", "createGuildFolderLocal", "editGuildFolderLocal");
+    const folderSettings = findByProps("saveGuildFolders");
+    const channelNavigation = findByProps("transitionToChannel");
+    const guildBarNavigation = findByName("transitionGuildsBarToGuildOrOpenSelectedChannel");
+
+    const nativeActions = [actions?.moveById, actions?.createGuildFolderLocal, actions?.editGuildFolderLocal,
+        guildBarNavigation, channelNavigation?.transitionToChannel, folderSettings?.saveGuildFolders];
+    if (nativeActions.some(action => typeof action !== "function")) throw new Error("ServerDrawer: a native guild, navigation or account sync action is unavailable");
+
+    const mutate = async (action: () => void) => {
+        action();
+
         try {
-            cleanup();
-        } catch {}
+            // Native UI also removes empty folders; do not save their transient entries back to the account.
+            await folderSettings.saveGuildFolders(SortedGuildStore.getGuildFolders().filter(entry => entry.guildIds.length).map(entry => ({ ...entry, guildIds: [...entry.guildIds] })));
+        } catch (error) { reportActionFailure("sync folder changes to your account", error); }
     };
-}
-function useAbortableSubscription(
-    hooks: ReactHooks,
-    signal: AbortSignal,
-    subscribe: (listener: () => void) => Unpatch,
-    listener: () => void,
-): void {
-    hooks.useEffect(() => {
-        if (signal.aborted) return () => undefined;
-        let cleanup: Unpatch = () => undefined;
-        try {
-            cleanup = once(subscribe(listener));
-        } catch {
-            cleanup = once(() => undefined);
-        }
-        const abort = (): void => cleanup();
-        signal.addEventListener("abort", abort, { once: true });
-        if (signal.aborted) cleanup();
-        else listener();
-        return () => {
-            signal.removeEventListener("abort", abort);
-            cleanup();
-        };
-    }, [listener, signal, subscribe]);
-}
-function safeStopPropagation(event: unknown): void {
-    try {
-        (event as { stopPropagation?: () => void } | undefined)?.stopPropagation?.();
-    } catch {}
-}
-export function createServerDrawerSurface(
-    api: SurfaceApi,
-    controller: ServerDrawerController,
-    preferences: Preferences<ServerDrawerPreferences>,
-    signal: AbortSignal,
-): HostComponent | undefined {
-    const hooks = api.react as unknown as ReactHooks | undefined;
-    const native = api.reactNative;
-    const NativeImage = component(native?.Image);
-    const NativePressable = component(native?.Pressable);
-    const NativeScrollView = component(native?.ScrollView);
-    const NativeText = component(native?.Text);
-    const NativeView = component(native?.View);
-    const HostTextInput = component(api.components.TextInput);
-    const HostFlatList = component(controller.FlatList);
-    let NativeGestureDetector: HostComponent | undefined;
-    let nativeGestureFactory: NativeGestureFactory | undefined;
-    try {
-        const gestureModule = api.modules.findByProps("Gesture", "GestureDetector");
-        NativeGestureDetector = component(gestureModule?.GestureDetector);
-        const candidate = gestureModule?.Gesture;
-        if (typeof candidate === "object" && candidate !== null) {
-            nativeGestureFactory = candidate as NativeGestureFactory;
-        }
-    } catch {}
-    if (!hooks?.useCallback || !hooks.useEffect || !hooks.useMemo || !hooks.useRef || !hooks.useState
-        || !NativeImage || !NativePressable || !NativeScrollView || !NativeText || !NativeView) {
-        return undefined;
+
+    const editFolder = (current: t.NativeGuildFolder, guildIds = current.guildIds, name = current.folderName) =>
+        mutate(() => actions.editGuildFolderLocal(current.folderId, guildIds, name));
+
+    const badge = (store: t.ReadStore, id: string): t.BadgeState => ({ mentionCount: store.getMentionCount(id), unread: store.hasUnread(id) });
+
+    const guildNode = (id: string, folderId?: string): t.DrawerGuild[] => {
+        const guild = GuildStore.getGuild(id);
+        if (!guild?.name?.trim()) return [];
+        const state = badge(GuildReadStateStore, id);
+
+        return [{ id, kind: "guild", name: guild.name, folderId,
+            avatarUri: guild.icon ? iconUtils.getGuildIconURL({ id, icon: guild.icon, size: 128, canAnimate: true }) : undefined,
+            ...state, unread: state.unread || state.mentionCount > 0 }];
+    };
+
+    const controller = {
+        snapshot(): t.ServerDrawerSnapshot {
+            const nodes: t.DrawerNode[] = SortedGuildStore.getGuildFolders().flatMap<t.DrawerNode>((folder: t.NativeGuildFolder) => {
+                const id = folder.folderId == null ? undefined : String(folder.folderId);
+                const children = folder.guildIds.flatMap(guild => guildNode(guild, id));
+                if (id === undefined) return children;
+
+                return [{ id, kind: "folder", children, name: folder.folderName?.trim() || undefined, color: folder.folderColor,
+                    mentionCount: children.reduce((total, guild) => total + guild.mentionCount, 0), unread: children.some(guild => guild.unread) }];
+            });
+
+            const directMessages: t.DirectMessage[] = PrivateChannelSortStore.getPrivateChannelIds().flatMap((id: string) => {
+                const channel = ChannelStore.getChannel(id);
+                if (!channel || (channel.type !== 1 && channel.type !== 3)) return [];
+
+                const users: t.NativeUser[] = (channel.recipients ?? []).map((recipient: string) => UserStore.getUser(recipient)).filter((user: t.NativeUser | undefined) => user !== undefined);
+                const avatarUri = channel.type === 1 ? users[0]?.getAvatarURL?.(undefined, 128, true)
+                    : channel.icon ? iconUtils.getChannelIconURL({ id, icon: channel.icon, size: 128 }) : undefined;
+
+                return [{ id, avatarUri, ...badge(ReadStateStore, id), name: channel.name || users.map(user => user.globalName || user.username).join(", ") || "Direct Message" }];
+            });
+
+            return { nodes, directMessages, selectedGuildId: SelectedGuildStore.getGuildId(), selectedPrivateChannelId: SelectedChannelStore.getChannelId() };
+        },
+
+        selectGuild: (id: string): void | false => GuildStore.getGuild(id) ? guildBarNavigation(id) : false,
+
+        selectPrivateChannel: (id: string): void | false => ChannelStore.getChannel(id) ? channelNavigation.transitionToChannel(id, {}) : false,
+
+        commitDrop(sourceId: string, targetId: string, mode: "move" | "merge" | "exit") {
+            const target = SortedGuildStore.getGuildFolderById(Number(targetId));
+            // An exit edits full native membership; omitted members become standalone servers.
+            if (mode === "exit") return !!target?.guildIds.includes(sourceId) && editFolder(target, target.guildIds.filter(id => id !== sourceId));
+            const source = mode === "move" ? SortedGuildStore.getGuildFolderById(Number(sourceId)) : undefined;
+            if (sourceId === targetId || !source && !GuildStore.getGuild(sourceId) || !target && !GuildStore.getGuild(targetId)) return false;
+
+            if (mode === "move") return mutate(() => actions.moveById(source?.folderId ?? sourceId, target?.folderId ?? targetId));
+            return target ? !target.guildIds.includes(sourceId) && editFolder(target, [...target.guildIds, sourceId])
+                : mutate(() => actions.createGuildFolderLocal([targetId, sourceId], undefined));
+        },
+
+        renameFolder(id: string, name: string) {
+            const current = SortedGuildStore.getGuildFolderById(Number(id));
+
+            return !!current && editFolder(current, undefined, name.trim());
+        },
+
+        openCreateGuild: (): void => findByProps("openCreateGuildModal").openCreateGuildModal(),
+
+        openCreateDm(): void | false {
+            const navigator = findByProps("getRootNavigationRef").getRootNavigationRef()?.current;
+            // Use the same nested route as Discord's Messages header, including on first use.
+            return navigator ? navigator.navigate("friends", { screen: "new-message", params: { sourcePage: "NEW_MESSAGE_COMPOSER" } }) : false;
+        },
+
+        animateNext: (duration?: number) => Native.LayoutAnimation.configureNext({ duration: duration ?? 110, update: { type: Native.LayoutAnimation.Types.easeInEaseOut } }),
+    };
+
+    const getItems = findByName("getGuildsBarGuildMenuItems");
+    if (typeof getItems !== "function") throw new Error("ServerDrawer: native guild menu is unavailable");
+
+    function GuildMenu({ guild, children }: t.GuildMenuProps) {
+        const items: t.MenuItem[] = FluxUtils.useStateFromStores([GuildStore, UserGuildSettingsStore],
+            () => getItems(guild.id).map((item: t.MenuItem) => ({
+                ...item,
+                async action() {
+                    try { await item.action(); }
+                    catch (error) { reportActionFailure("complete this server action", error); }
+                },
+            })), [guild.id]);
+        useEffect(() => () => {
+            if (contextMenu.ContextMenuStore.getState().menu?.items === items) contextMenu.hideContextMenu();
+        }, [items]);
+
+        return <ContextMenu items={items} title={guild.name} triggerOnLongPress disableGesture>{children}</ContextMenu>;
     }
-    const Image = NativeImage as HostComponent;
-    const Pressable = NativePressable as HostComponent;
-    const ScrollView = NativeScrollView as HostComponent;
-    const Text = NativeText as HostComponent;
-    const View = NativeView as HostComponent;
-    const FloatingView = NativeView as HostComponent;
-    const TextInput = HostTextInput;
-    const ChatIcon = api.components.ChatIcon;
-    const FlatList = HostFlatList;
-    const GestureDetector = NativeGestureDetector;
-    const nativeReorderAvailable = Boolean(GestureDetector && nativeGestureFactory?.Pan);
-    const gestureHooks = hooks;
-    const initialWindowWidth = nativeDimension(native, "width", 360);
-    const initialWindowHeight = nativeDimension(native, "height", 720);
-    function NativeReorderTarget(properties: {
-        readonly children: unknown;
-        readonly key?: unknown;
-        readonly offset?: DragPoint | undefined;
-        readonly onCancel: () => void;
-        readonly onDrop: (event: unknown) => void;
-        readonly onMove: (event: unknown) => void;
-        readonly onStart: (event: unknown) => boolean;
-    }): any {
-        const callbacks = gestureHooks.useRef(properties);
-        const active = gestureHooks.useRef(false);
+
+    const { useSafeAreaInsets } = findByProps("useSafeAreaInsets");
+    const { useNavigatorBackPressHandler } = findByProps("useNavigatorBackPressHandler");
+    const { Gesture, GestureDetector }: t.NativeGestureModule = findByProps("Gesture", "GestureDetector");
+    const { Image, Pressable, ScrollView, Text, View, TextInput } = Native;
+
+    function DragTarget(properties: t.DragTargetProps) {
+        const callbacks = useRef(properties);
         callbacks.current = properties;
-        const dragGesture = gestureHooks.useMemo(() => {
-            if (!nativeGestureFactory?.Pan) return undefined;
-            try {
-                let builder = nativeGestureFactory.Pan();
-                builder = builder.activateAfterLongPress?.(REORDER_LONG_PRESS_MS) ?? builder;
-                builder = builder.shouldCancelWhenOutside?.(false) ?? builder;
-                builder = builder.runOnJS?.(true) ?? builder;
-                builder = builder.onStart?.((event: unknown) => {
-                    active.current = callbacks.current.onStart(event);
-                }) ?? builder;
-                builder = builder.onUpdate?.((event: unknown) => {
-                    if (active.current) callbacks.current.onMove(event);
-                }) ?? builder;
-                builder = builder.onTouchesUp?.((event: unknown) => {
-                    if (!active.current) return;
-                    active.current = false;
-                    callbacks.current.onDrop(event);
-                }) ?? builder;
-                builder = builder.onTouchesCancelled?.(() => {
-                    if (!active.current) return;
-                    active.current = false;
-                    callbacks.current.onCancel();
-                }) ?? builder;
-                builder = builder.onEnd?.((event: unknown) => {
-                    if (!active.current) return;
-                    active.current = false;
-                    callbacks.current.onDrop(event);
-                }) ?? builder;
-                builder = builder.onFinalize?.(() => {
-                    if (!active.current) return;
-                    active.current = false;
-                    callbacks.current.onCancel();
-                }) ?? builder;
-                return builder;
-            } catch {
-                return undefined;
-            }
-        }, []);
-        return GestureDetector && dragGesture
-            ? <GestureDetector gesture={dragGesture}>
-                <View
-                    collapsable={false}
-                    style={properties.offset
-                        ? { transform: [{ translateX: properties.offset.x }, { translateY: properties.offset.y }] }
-                        : undefined}
-                >
-                    {properties.children}
-                </View>
-            </GestureDetector>
-            : properties.children;
+        const gesture = useMemo(() => Gesture.Pan().activateAfterLongPress(LONG_PRESS_MS)
+            .shouldCancelWhenOutside(false).runOnJS(true)
+            .onStart(({ absoluteX: x, absoluteY: y }) => callbacks.current.onStart({ x, y }))
+            .onUpdate(({ absoluteX: x, absoluteY: y }) => callbacks.current.onMove({ x, y }))
+            .onEnd(({ absoluteX: x, absoluteY: y }, success) => { if (success) callbacks.current.onDrop({ x, y }); })
+            .onFinalize(() => callbacks.current.onCancel()), []);
+
+        return <GestureDetector gesture={gesture}>
+            <View collapsable={false} style={properties.offset ? { transform: [{ translateY: properties.offset }] } : undefined}>{properties.children}</View>
+        </GestureDetector>;
     }
-    function HeaderLayoutIcon(properties: { readonly layout: DrawerLayout }): any {
-        const palette = usePalette();
-        if (properties.layout === "grid") {
-            return <View pointerEvents="none" style={{ height: 24, justifyContent: "space-between", paddingVertical: 3, width: 24 }}>
-                {[0, 1, 2].map(line => <View
-                    key={line}
-                    style={{ backgroundColor: palette.muted, borderRadius: 2, height: 3, width: 24 }}
-                />)}
-            </View>;
-        }
-        return <View pointerEvents="none" style={{
-            flexDirection: "row",
-            flexWrap: "wrap",
-            gap: 4,
-            height: 24,
-            width: 24,
-        }}>
-            {[0, 1, 2, 3].map(cell => <View
-                key={cell}
-                style={{ backgroundColor: palette.muted, borderRadius: 2, height: 10, width: 10 }}
-            />)}
+
+    function Artwork({ item, size, badged, compact, selected }: t.ArtworkProps) {
+        const styles = useStyles();
+        const background: string = useToken(semanticColors.BACKGROUND_BASE_LOWER);
+        const foreground: string = useToken(semanticColors.TEXT_DEFAULT);
+        const folderBackground: string = useToken(semanticColors.GUILD_FOLDER_BACKGROUND);
+        const folder = item.kind === "folder";
+        const uri = folder ? undefined : item.avatarUri;
+        const radius = !item.kind ? size / 2 : size >= 44 ? 16 : folder ? 9 : Math.max(5, Math.round(size * 0.28));
+        let fill = item.kind === "guild" ? rawColors.BRAND_500 : background;
+        if (folder) fill = item.color === undefined ? folderBackground : `#${item.color.toString(16).padStart(6, "0")}`;
+
+        return <View style={{ ...CENTER, position: "relative", height: size, width: size, borderRadius: radius, backgroundColor: uri ? undefined : fill }}>
+            {folder ? item.children.slice(0, 4).map((guild, index) => <View key={guild.id} style={{ [index % 2 ? "right" : "left"]: 6, [index < 2 ? "top" : "bottom"]: 6, position: "absolute" }}>
+                <Artwork item={guild} size={Math.floor(size * 0.34)} />
+            </View>) : uri ? <Image accessibilityIgnoresInvertColors resizeMode="cover" source={{ uri }}
+                style={{ borderRadius: radius, height: size, width: size }} /> :
+                <Text numberOfLines={1} style={{ color: item.kind ? rawColors.WHITE : foreground,
+                    fontSize: Math.max(10, Math.round(size * 0.34)), fontWeight: "700" }}>{initials(item.name)}</Text>}
+            {selected ? <View pointerEvents="none" style={[styles.compactSelection, { borderRadius: size / 3 + 3 }]} /> : null}
+            {badged && (item.mentionCount ? <View style={[styles.mentionBadge,
+                { bottom: compact ? -3 : -4, minHeight: compact ? 18 : 20, minWidth: compact ? 18 : 20, right: compact ? -4 : -5 }]}>
+                <Text style={{ color: rawColors.WHITE, fontSize: compact ? 9 : 10, fontWeight: "800" }}>{item.mentionCount > 99 ? "99+" : item.mentionCount}</Text>
+            </View> : item.unread ? <View style={[styles.unreadBadge,
+                { bottom: compact ? -2 : -3, height: compact ? 13 : 14, right: compact ? -2 : -3, width: compact ? 13 : 14 }]} /> : null)}
         </View>;
     }
-    function HeaderAddIcon(): any {
-        const palette = usePalette();
-        return <View pointerEvents="none" style={{ height: 24, position: "relative", width: 24 }}>
-            <View style={{
-                backgroundColor: palette.muted,
-                borderRadius: 2,
-                height: 3,
-                left: 0,
-                position: "absolute",
-                right: 0,
-                top: 10.5,
-            }} />
-            <View style={{
-                backgroundColor: palette.muted,
-                borderRadius: 2,
-                bottom: 0,
-                left: 10.5,
-                position: "absolute",
-                top: 0,
-                width: 3,
-            }} />
-        </View>;
-    }
-    const initialPreferences = (): ServerDrawerPreferences => {
-        try {
-            const stored = preferences.get();
-            return {
-                dmOrder: normalizedOrder(stored.dmOrder),
-                layout: normalizedLayout(stored.layout),
-                serverOrder: normalizedOrder(stored.serverOrder),
-            };
-        } catch {
-            return { dmOrder: Object.freeze([]), layout: "grid", serverOrder: Object.freeze([]) };
-        }
-    };
-    function GuildArtwork(properties: { readonly guild: DrawerGuild; readonly size: number }): any {
-        const uri = iconUri(properties.guild);
-        const radius = properties.size >= 44 ? 16 : Math.max(5, Math.round(properties.size * 0.28));
-        if (uri) {
-            return <Image
-                accessibilityIgnoresInvertColors={true}
-                resizeMode="cover"
-                source={{ uri }}
-                style={{ borderRadius: radius, height: properties.size, width: properties.size }}
-            />;
-        }
-        return <View style={{
-            alignItems: "center",
-            backgroundColor: "#5865f2",
-            borderRadius: radius,
-            height: properties.size,
-            justifyContent: "center",
-            width: properties.size,
-        }}>
-            <Text numberOfLines={1} style={{
-                color: "#ffffff",
-                fontSize: Math.max(10, Math.round(properties.size * 0.34)),
-                fontWeight: "700",
-            }}>
-                {initials(properties.guild.name)}
-            </Text>
-        </View>;
-    }
-    function Badge(properties: {
-        readonly compact?: boolean;
-        readonly node: { readonly mentionLabel: string | undefined; readonly unread: boolean };
-    }): any {
-        const palette = usePalette();
-        const compact = properties.compact === true;
-        if (properties.node.mentionLabel) {
-            return <View style={{
-                alignItems: "center",
-                backgroundColor: palette.danger,
-                borderColor: palette.background,
-                borderRadius: 10,
-                borderWidth: 2,
-                bottom: compact ? -3 : -4,
-                justifyContent: "center",
-                minHeight: compact ? 18 : 20,
-                minWidth: compact ? 18 : 20,
-                paddingHorizontal: 4,
-                position: "absolute",
-                right: compact ? -4 : -5,
-            }}>
-                <Text style={{ color: "#ffffff", fontSize: compact ? 9 : 10, fontWeight: "800" }}>
-                    {properties.node.mentionLabel}
-                </Text>
-            </View>;
-        }
-        if (!properties.node.unread) return null;
-        return <View style={{
-            backgroundColor: palette.normal,
-            borderColor: palette.background,
-            borderRadius: 7,
-            borderWidth: 2,
-            bottom: compact ? -2 : -3,
-            height: compact ? 13 : 14,
-            position: "absolute",
-            right: compact ? -2 : -3,
-            width: compact ? 13 : 14,
-        }} />;
-    }
-    function FolderArtwork(properties: { readonly folder: DrawerFolder; readonly size: number }): any {
-        const palette = usePalette();
-        const mini = Math.floor(properties.size * 0.34);
-        const positions = [
-            { left: 6, top: 6 },
-            { right: 6, top: 6 },
-            { bottom: 6, left: 6 },
-            { bottom: 6, right: 6 },
-        ] as const;
-        return <View style={{
-            backgroundColor: folderColor(properties.folder.color, palette.folder),
-            borderRadius: properties.size >= 44 ? 16 : 9,
-            height: properties.size,
-            position: "relative",
-            width: properties.size,
-        }}>
-            {properties.folder.children.slice(0, 4).map((guild, index) => (
-                <View key={guild.id} style={{ ...positions[index], position: "absolute" }}>
-                    <GuildArtwork guild={guild} size={mini} />
-                </View>
-            ))}
-        </View>;
-    }
-    function DirectMessageArtwork(properties: { readonly directMessage: DirectMessage; readonly size: number }): any {
-        const palette = usePalette();
-        if (properties.directMessage.avatarUri) {
-            return <Image
-                accessibilityIgnoresInvertColors={true}
-                resizeMode="cover"
-                source={{ uri: properties.directMessage.avatarUri }}
-                style={{ borderRadius: properties.size / 2, height: properties.size, width: properties.size }}
-            />;
-        }
-        return <View style={{
-            alignItems: "center",
-            backgroundColor: palette.input,
-            borderRadius: properties.size / 2,
-            height: properties.size,
-            justifyContent: "center",
-            width: properties.size,
-        }}>
-            <Text numberOfLines={1} style={{
-                color: palette.normal,
-                fontSize: Math.max(10, Math.round(properties.size * 0.34)),
-                fontWeight: "700",
-            }}>
-                {initials(properties.directMessage.name)}
-            </Text>
-        </View>;
-    }
-    function CompactGuild(properties: {
-        readonly guild: DrawerGuild;
-        readonly key?: unknown;
-        readonly onPress: () => void;
-        readonly onLongPress: (event: unknown) => void;
-        readonly selected: boolean;
-        readonly size: number;
-    }): any {
-        const palette = usePalette();
-        return <Pressable
-            accessibilityLabel={properties.guild.name
-                + (properties.guild.mentionCount > 0
-                    ? `, ${properties.guild.mentionCount} mentions`
-                    : properties.guild.unread ? ", unread" : "")}
-            accessibilityRole="button"
-            accessibilityState={{ selected: properties.selected }}
-            onPress={properties.onPress}
-            onLongPress={properties.onLongPress}
-            delayLongPress={REORDER_LONG_PRESS_MS}
-            accessibilityHint="Long press for server actions"
-            style={{ height: properties.size, width: properties.size }}
-        >
-            <GuildArtwork guild={properties.guild} size={properties.size} />
-            {properties.selected ? <View pointerEvents="none" style={{
-                borderColor: palette.muted,
-                borderRadius: properties.size / 3 + 3,
-                borderWidth: 3,
-                bottom: -3,
-                left: -3,
-                position: "absolute",
-                right: -3,
-                top: -3,
-            }} /> : null}
-            <Badge compact={true} node={properties.guild} />
-        </Pressable>;
-    }
-    function CompactFolder(properties: {
-        readonly folder: DrawerFolder;
-        readonly key?: unknown;
-        readonly onPress: () => void;
-        readonly size: number;
-    }): any {
-        return <Pressable
-            accessibilityLabel={properties.folder.name ?? "Server folder"}
-            accessibilityRole="button"
-            onPress={properties.onPress}
-            style={{ height: properties.size, width: properties.size }}
-        >
-            <FolderArtwork folder={properties.folder} size={properties.size} />
-            <Badge compact={true} node={properties.folder} />
-        </Pressable>;
-    }
-    function OverflowButton(properties: { readonly key?: unknown; readonly onPress: () => void; readonly size: number }): any {
-        const palette = usePalette();
-        const square = Math.max(10, Math.floor((properties.size * 0.8 - 5) / 2));
-        return <Pressable
-            accessibilityLabel="View all servers"
-            accessibilityRole="button"
-            onPress={properties.onPress}
-            style={{ alignItems: "center", height: properties.size, justifyContent: "center", width: properties.size }}
-        >
-            <View style={{
-                flexDirection: "row",
-                flexWrap: "wrap",
-                gap: 5,
-                height: square * 2 + 5,
-                width: square * 2 + 5,
-            }}>
-                {[0, 1, 2, 3].map(value => <View
-                    key={value}
-                    style={{ backgroundColor: palette.normal, borderRadius: 5, height: square, width: square }}
-                />)}
-            </View>
-        </Pressable>;
-    }
-    function CreateButton(properties: { readonly key?: unknown; readonly onPress: () => void; readonly size: number }): any {
-        const palette = usePalette();
-        return <Pressable
-            accessibilityLabel="Create a server"
-            accessibilityRole="button"
-            onPress={properties.onPress}
-            style={{
-                alignItems: "center",
-                borderColor: palette.brand,
-                borderRadius: properties.size / 3,
-                borderWidth: 1,
-                height: properties.size,
-                justifyContent: "center",
-                width: properties.size,
-            }}
-        >
-            <Text style={{ color: palette.muted, fontSize: Math.round(properties.size * 0.7) }}>＋</Text>
-        </Pressable>;
-    }
-    function UnavailableButton(properties: { readonly count: number; readonly key?: unknown; readonly size: number }): any {
-        const palette = usePalette();
-        return <View
-            accessibilityLabel={`${String(properties.count)} unavailable servers`}
-            accessibilityRole="text"
-            style={{
-                alignItems: "center",
-                backgroundColor: palette.input,
-                borderRadius: properties.size / 3,
-                height: properties.size,
-                justifyContent: "center",
-                width: properties.size,
-            }}
-        >
-            <Text style={{ color: palette.muted, fontSize: 12, fontWeight: "700" }}>{properties.count}</Text>
-        </View>;
-    }
-    function DrawerItem(properties: {
-        readonly merging?: boolean;
-        readonly dragging: boolean;
-        readonly key?: unknown;
-        readonly layout: DrawerLayout;
-        readonly nativeReorder: boolean;
-        readonly node: DrawerNode;
-        readonly onFolder: (folder: DrawerFolder) => void;
-        readonly onGuild: (guild: DrawerGuild) => void;
-        readonly onLongPress: (event: unknown) => void;
-        readonly onPressOut: (event: unknown) => void;
-        readonly onTouchCancel: () => void;
-        readonly onTouchEnd: (event: unknown) => void;
-        readonly onTouchMove: (event: unknown) => void;
-        readonly selectedGuildId?: string | undefined;
-    }): any {
-        const palette = usePalette();
-        const selected = properties.node.kind === "guild" && properties.node.id === properties.selectedGuildId;
-        const artwork = properties.node.kind === "guild"
-            ? <GuildArtwork guild={properties.node} size={DRAWER_ICON_SIZE} />
-            : <FolderArtwork folder={properties.node} size={DRAWER_ICON_SIZE} />;
-        const label = properties.node.kind === "guild" ? properties.node.name : properties.node.name ?? "Folder";
-        const press = (): void => properties.node.kind === "guild"
-            ? properties.onGuild(properties.node)
-            : properties.onFolder(properties.node);
-        const accessibilityLabel = label
-            + (properties.node.mentionCount > 0
-                ? `, ${properties.node.mentionCount} mentions`
-                : properties.node.unread ? ", unread" : "");
-        if (properties.layout === "list") {
-            return <Pressable
-                accessibilityLabel={accessibilityLabel}
-                accessibilityRole="button"
-                accessibilityState={{ selected }}
-                cancelable={!properties.dragging}
-                delayLongPress={REORDER_LONG_PRESS_MS}
-                onLongPress={properties.nativeReorder ? undefined : properties.onLongPress}
-                onPress={press}
-                onPressOut={properties.nativeReorder ? undefined : properties.onPressOut}
-                pressRetentionOffset={{ bottom: 4096, left: 4096, right: 4096, top: 4096 }}
-                onTouchCancel={properties.nativeReorder ? undefined : properties.onTouchCancel}
-                onTouchEnd={properties.nativeReorder ? undefined : properties.onTouchEnd}
-                onTouchMove={properties.nativeReorder ? undefined : properties.onTouchMove}
-                style={{
-                    alignItems: "center",
-                    backgroundColor: selected || properties.merging ? `${palette.brand}24` : "transparent",
-                    borderRadius: 12,
-                    flexDirection: "row",
-                    gap: 14,
-                    minHeight: 68,
-                    paddingHorizontal: 10,
-                    opacity: properties.dragging ? 0.08 : 1,
-                    width: "100%",
-                }}
-            >
-                <View style={{ height: DRAWER_ICON_SIZE, position: "relative", width: DRAWER_ICON_SIZE }}>
-                    {artwork}
-                    <Badge node={properties.node} />
-                </View>
-                <Text numberOfLines={1} style={{
-                    color: selected ? palette.brand : palette.normal,
-                    flex: 1,
-                    fontSize: 16,
-                    fontWeight: selected ? "700" : "500",
-                }}>
-                    {label}
-                </Text>
-                {properties.node.kind === "folder"
-                    ? <Text style={{ color: palette.muted, fontSize: 22 }}>›</Text>
-                    : null}
-            </Pressable>;
-        }
-        return <Pressable
-            accessibilityLabel={accessibilityLabel}
-            accessibilityRole="button"
-            accessibilityState={{ selected }}
-            cancelable={!properties.dragging}
-            delayLongPress={REORDER_LONG_PRESS_MS}
-            onLongPress={properties.nativeReorder ? undefined : properties.onLongPress}
-            onPress={press}
-            onPressOut={properties.nativeReorder ? undefined : properties.onPressOut}
+
+    function Item({ item, layout = "grid", selectedId, dragging, merging, onPress, menu, compactSize, previewWidth }: t.ItemProps) {
+        const styles = useStyles();
+        const foreground: string = useToken(semanticColors.TEXT_DEFAULT);
+        const brand: string = useToken(semanticColors.TEXT_BRAND);
+        const muted: string = useToken(semanticColors.TEXT_MUTED);
+        const folder = item.kind === "folder";
+        const selected = !folder && item.id === selectedId;
+        const label = item.name ?? (compactSize ? "Server folder" : "Folder");
+        const accessibilityLabel = label + (item.mentionCount > 0 ? `, ${item.mentionCount} mentions` : item.unread ? ", unread" : "");
+        const artwork = <Artwork item={item} size={compactSize ?? ICON_SIZE} badged compact={!!compactSize} selected={!!compactSize && selected} />;
+
+        if (compactSize) return <Pressable {...menu} accessibilityRole="button" onPress={onPress}
+            accessibilityLabel={folder ? label : accessibilityLabel} accessibilityState={folder ? undefined : { selected }}
+            accessibilityHint={folder ? undefined : "Long press for server actions"} delayLongPress={folder ? undefined : LONG_PRESS_MS}
+            style={{ height: compactSize, width: compactSize }}>{artwork}</Pressable>;
+
+        const list = layout === "list";
+        const highlighted = selected || merging;
+        const content = <>
+            {list || previewWidth ? artwork : <View style={[styles.selectionRing,
+                { borderColor: highlighted ? brand : "transparent", borderRadius: item.kind ? 20 : 31 }]}>{artwork}</View>}
+            <Text ellipsizeMode={list ? undefined : "tail"} numberOfLines={1} style={[list ? { flex: 1, fontSize: 16 } : styles.gridLabel,
+                { color: selected ? brand : foreground, fontWeight: selected || previewWidth ? "700" : "500" },
+                previewWidth && !list ? { width: 60 } : undefined]}>{label}</Text>
+            {!previewWidth && list && folder ? <Icon name="ChevronSmallRightIcon" color={muted} size={22} /> : null}
+        </>;
+
+        if (previewWidth) return <View style={[styles.previewFrame, list ? [styles.listPreview, { width: previewWidth }] : styles.gridPreview]}>{content}</View>;
+
+        return <Pressable ref={menu?.ref} accessibilityActions={menu?.accessibilityActions} onAccessibilityAction={menu?.onAccessibilityAction}
+            accessibilityLabel={accessibilityLabel} accessibilityRole="button" accessibilityState={{ selected }}
+            cancelable={!dragging} delayLongPress={LONG_PRESS_MS} onPress={onPress}
             pressRetentionOffset={{ bottom: 4096, left: 4096, right: 4096, top: 4096 }}
-            onTouchCancel={properties.nativeReorder ? undefined : properties.onTouchCancel}
-            onTouchEnd={properties.nativeReorder ? undefined : properties.onTouchEnd}
-            onTouchMove={properties.nativeReorder ? undefined : properties.onTouchMove}
-            style={{
-                alignItems: "center",
-                minHeight: 82,
-                opacity: properties.dragging ? 0.08 : 1,
-                width: DRAWER_ITEM_WIDTH,
-            }}
-        >
-            <View style={{
-                alignItems: "center",
-                borderColor: selected || properties.merging ? palette.brand : "transparent",
-                borderRadius: 20,
-                borderWidth: 3,
-                height: 62,
-                justifyContent: "center",
-                width: 62,
-            }}>
-                <View style={{ height: DRAWER_ICON_SIZE, position: "relative", width: DRAWER_ICON_SIZE }}>
-                    {artwork}
-                    <Badge node={properties.node} />
-                </View>
-            </View>
-            <Text ellipsizeMode="tail" numberOfLines={1} style={{
-                color: selected ? palette.brand : palette.normal,
-                fontSize: 11,
-                fontWeight: selected ? "700" : "500",
-                marginTop: 4,
-                textAlign: "center",
-                width: 68,
-            }}>
-                {label}
-            </Text>
+            style={[list ? styles.listItem : styles.gridItem, { opacity: dragging ? 0.08 : 1 },
+                list ? { backgroundColor: highlighted ? `${brand}24` : "transparent" } : undefined]}>{content}</Pressable>;
+    }
+
+    function FolderTitle({ folder, style }: t.FolderTitleProps) {
+        const styles = useStyles();
+        const TEXT_DEFAULT: string = useToken(semanticColors.TEXT_DEFAULT);
+        const [editing, setEditing] = useState<"idle" | "editing" | "error">("idle");
+
+        if (editing !== "idle") return <View style={style}>
+            <TextInput accessibilityLabel="Folder name" autoFocus selectTextOnFocus maxLength={100} defaultValue={folder.name ?? ""} returnKeyType="done" style={styles.folderInput}
+                onEndEditing={async ({ nativeEvent: { text } }) => {
+                    try {
+                        if (text.trim() !== (folder.name ?? "") && await controller.renameFolder(folder.id, text) === false) throw new Error("Folder is no longer available");
+                        setEditing("idle");
+                    } catch { setEditing("error"); }
+                }} />
+            {editing === "error" ? <Text style={{ color: TEXT_DEFAULT, fontSize: 12 }}>Could not rename folder. Try again.</Text> : null}
+        </View>;
+
+        return <Pressable accessibilityRole="button" accessibilityLabel={`Rename folder: ${folder.name ?? "Folder"}`} onPress={() => setEditing("editing")} style={style}>
+            <Text numberOfLines={1} style={styles.folderTitle}>{folder.name || "Folder"}</Text>
         </Pressable>;
     }
-    function DirectMessageItem(properties: {
-        readonly directMessage: DirectMessage;
-        readonly dragging: boolean;
-        readonly key?: unknown;
-        readonly layout: DrawerLayout;
-        readonly nativeReorder: boolean;
-        readonly onLongPress: (event: unknown) => void;
-        readonly onPress: () => void;
-        readonly onPressOut: (event: unknown) => void;
-        readonly onTouchCancel: () => void;
-        readonly onTouchEnd: (event: unknown) => void;
-        readonly onTouchMove: (event: unknown) => void;
-        readonly selected: boolean;
-    }): any {
-        const palette = usePalette();
-        const accessibilityLabel = properties.directMessage.name
-            + (properties.directMessage.mentions > 0
-                ? `, ${properties.directMessage.mentions} mentions`
-                : properties.directMessage.unread ? ", unread" : "");
-        const artwork = <View style={{ height: DRAWER_ICON_SIZE, position: "relative", width: DRAWER_ICON_SIZE }}>
-            <DirectMessageArtwork directMessage={properties.directMessage} size={DRAWER_ICON_SIZE} />
-            <Badge node={properties.directMessage} />
-        </View>;
-        const common = {
-            accessibilityLabel,
-            accessibilityRole: "button",
-            accessibilityState: { selected: properties.selected },
-            cancelable: !properties.dragging,
-            delayLongPress: REORDER_LONG_PRESS_MS,
-            onLongPress: properties.nativeReorder ? undefined : properties.onLongPress,
-            onPress: properties.onPress,
-            onPressOut: properties.nativeReorder ? undefined : properties.onPressOut,
-            pressRetentionOffset: { bottom: 4096, left: 4096, right: 4096, top: 4096 },
-            onTouchCancel: properties.nativeReorder ? undefined : properties.onTouchCancel,
-            onTouchEnd: properties.nativeReorder ? undefined : properties.onTouchEnd,
-            onTouchMove: properties.nativeReorder ? undefined : properties.onTouchMove,
-        } as const;
-        if (properties.layout === "list") {
-            return <Pressable {...common} style={{
-                alignItems: "center",
-                backgroundColor: properties.selected ? `${palette.brand}24` : "transparent",
-                borderRadius: 12,
-                flexDirection: "row",
-                gap: 14,
-                minHeight: 68,
-                opacity: properties.dragging ? 0.08 : 1,
-                paddingHorizontal: 10,
-                width: "100%",
-            }}>
-                {artwork}
-                <Text numberOfLines={1} style={{
-                    color: properties.selected ? palette.brand : palette.normal,
-                    flex: 1,
-                    fontSize: 16,
-                    fontWeight: properties.selected ? "700" : "500",
-                }}>
-                    {properties.directMessage.name}
-                </Text>
-            </Pressable>;
-        }
-        return <Pressable {...common} style={{
-            alignItems: "center",
-            minHeight: 82,
-            opacity: properties.dragging ? 0.08 : 1,
-            width: DRAWER_ITEM_WIDTH,
-        }}>
-            <View style={{
-                alignItems: "center",
-                borderColor: properties.selected ? palette.brand : "transparent",
-                borderRadius: 31,
-                borderWidth: 3,
-                height: 62,
-                justifyContent: "center",
-                width: 62,
-            }}>
-                {artwork}
-            </View>
-            <Text ellipsizeMode="tail" numberOfLines={1} style={{
-                color: properties.selected ? palette.brand : palette.normal,
-                fontSize: 11,
-                fontWeight: properties.selected ? "700" : "500",
-                marginTop: 4,
-                textAlign: "center",
-                width: 68,
-            }}>
-                {properties.directMessage.name}
-            </Text>
-        </Pressable>;
-    }
-    function DragPreview(properties: {
-        readonly item: DirectMessage | DrawerNode;
-        readonly layout: DrawerLayout;
-        readonly width: number;
-    }): any {
-        const palette = usePalette();
-        const node = "kind" in properties.item ? properties.item : undefined;
-        const directMessage = properties.item as DirectMessage;
-        const label = node
-            ? node.kind === "guild" ? node.name : node.name ?? "Folder"
-            : directMessage.name;
-        const artwork = node
-            ? node.kind === "guild"
-                ? <GuildArtwork guild={node} size={DRAWER_ICON_SIZE} />
-                : <FolderArtwork folder={node} size={DRAWER_ICON_SIZE} />
-            : <DirectMessageArtwork directMessage={directMessage} size={DRAWER_ICON_SIZE} />;
-        if (properties.layout === "list") {
-            return <View style={{
-                alignItems: "center",
-                backgroundColor: palette.surface,
-                borderColor: palette.border,
-                borderRadius: 14,
-                borderWidth: 1,
-                elevation: 18,
-                flexDirection: "row",
-                gap: 14,
-                height: 68,
-                paddingHorizontal: 10,
-                shadowColor: "#000000",
-                shadowOffset: { height: 8, width: 0 },
-                shadowOpacity: 0.35,
-                shadowRadius: 12,
-                width: properties.width,
-            }}>
-                <View style={{ height: DRAWER_ICON_SIZE, position: "relative", width: DRAWER_ICON_SIZE }}>
-                    {artwork}
-                    <Badge node={properties.item} />
-                </View>
-                <Text numberOfLines={1} style={{ color: palette.normal, flex: 1, fontSize: 16, fontWeight: "700" }}>
-                    {label}
-                </Text>
-            </View>;
-        }
-        return <View style={{
-            alignItems: "center",
-            backgroundColor: palette.surface,
-            borderColor: palette.border,
-            borderRadius: 20,
-            borderWidth: 1,
-            elevation: 18,
-            minHeight: 82,
-            paddingTop: 5,
-            shadowColor: "#000000",
-            shadowOffset: { height: 8, width: 0 },
-            shadowOpacity: 0.4,
-            shadowRadius: 12,
-            width: DRAWER_ITEM_WIDTH,
-        }}>
-            <View style={{ height: DRAWER_ICON_SIZE, position: "relative", width: DRAWER_ICON_SIZE }}>
-                {artwork}
-                <Badge node={properties.item} />
-            </View>
-            <Text ellipsizeMode="tail" numberOfLines={1} style={{
-                color: palette.normal,
-                fontSize: 11,
-                fontWeight: "700",
-                marginTop: 4,
-                textAlign: "center",
-                width: 60,
-            }}>
-                {label}
-            </Text>
+
+    function Tabs<Value extends string>({ options, value, onChange, filter = false }: t.TabsProps<Value>) {
+        const styles = useStyles();
+        const background: string = useToken(semanticColors.BACKGROUND_SECONDARY_ALT);
+        const foreground: string = useToken(semanticColors.TEXT_DEFAULT);
+        const muted: string = useToken(semanticColors.TEXT_MUTED);
+
+        return <View accessibilityRole="tablist" style={filter ? styles.filterTabs : styles.viewTabs}>
+            {options.map(([id, label, accessibilityLabel = label]) => <Pressable key={id} accessibilityLabel={accessibilityLabel} accessibilityRole="tab" accessibilityState={{ selected: value === id }}
+                onPress={() => onChange(id)} style={[filter ? styles.filterTab : styles.viewTab,
+                    { backgroundColor: value === id ? background : "transparent" }]}>
+                <Text numberOfLines={filter ? undefined : 1} style={{ color: value === id ? foreground : muted,
+                    fontSize: filter ? 14 : 13, fontWeight: value === id ? "700" : "500" }}>{label}</Text>
+            </Pressable>)}
         </View>;
     }
-    function FolderTitle({ folder, style }: { folder: DrawerFolder; style: any }): any {
-        const palette = usePalette();
-        const [editing, setEditing] = gestureHooks.useState(false);
-        const [name, setName] = gestureHooks.useState(folder.name ?? "");
-        const [error, setError] = gestureHooks.useState(false);
-        const saving = gestureHooks.useRef(false);
-        const save = (): void => {
-            if (saving.current) return;
-            saving.current = true;
-            try {
-                if (name.trim() !== (folder.name ?? "") && !controller.renameFolder?.(folder.id, name)) {
-                    setError(true);
-                    return;
-                }
-                setEditing(false);
-                setError(false);
-            } catch { setError(true); }
-            finally { saving.current = false; }
-        };
-        if (editing && TextInput) return <View style={style}>
-            <TextInput accessibilityLabel="Folder name" autoFocus selectTextOnFocus maxLength={100}
-                value={name} onChangeText={setName} onSubmitEditing={save} onBlur={save} returnKeyType="done"
-                style={{ color: palette.normal, fontSize: 20, padding: 4, borderBottomWidth: 1, borderColor: palette.brand }} />
-            {error ? <Text style={{ color: palette.normal, fontSize: 12 }}>Could not rename folder. Try again.</Text> : null}
-        </View>;
-        return <Pressable accessibilityRole="button" accessibilityLabel={`Rename folder: ${folder.name ?? "Folder"}`}
-            onPress={() => { setName(folder.name ?? ""); setError(false); setEditing(true); }} style={style}>
-            <Text numberOfLines={1} style={{ color: palette.normal, fontSize: 20, fontWeight: "700" }}>{folder.name || "Folder"}</Text>
-        </Pressable>;
+
+    function useDrawerData() {
+        const stored = preferences.use()!;
+        const layout: t.DrawerLayout = stored.layout === "list" ? "list" : "grid";
+
+        const snapshot: t.ServerDrawerSnapshot = FluxUtils.useStateFromStores(
+            [ChannelStore, GuildReadStateStore, GuildStore, PrivateChannelSortStore, ReadStateStore, SelectedChannelStore, SelectedGuildStore, SortedGuildStore, UserStore],
+            () => signal.aborted ? EMPTY_SNAPSHOT : controller.snapshot(),
+        );
+
+        const directMessages = useMemo(() => orderedDms(snapshot.directMessages, stored.dmOrder),
+            [snapshot.directMessages, stored.dmOrder]);
+
+        return { ...snapshot, layout, directMessages };
     }
-    return function ServerDrawerSurface(properties: Record<string, unknown>): any {
-        const openGuildMenu = api.useGuildMenu(signal);
-        const palette = usePalette();
-        const bottomInset = Math.max(0, finite(properties.bottomInset));
-        const stored = hooks.useMemo(initialPreferences, []);
-        const [dmOrder, setDmOrder] = hooks.useState<readonly string[]>(stored.dmOrder);
-        const [dragPoint, setDragPoint] = hooks.useState<DragPoint | undefined>(undefined);
-        const [overExitTarget, setOverExitTarget] = hooks.useState(false);
-        const [mergeTargetId, setMergeTargetId] = hooks.useState<string | undefined>(undefined);
-        const [dragTargetId, setDragTargetId] = hooks.useState<string | undefined>(undefined);
-        const [draggingId, setDraggingId] = hooks.useState<string | undefined>(undefined);
-        const [expanded, setExpanded] = hooks.useState(false);
-        const [filter, setFilter] = hooks.useState<"all" | "unread">("all");
-        const [folderPage, setFolderPage] = hooks.useState(0);
-        const [folderId, setFolderId] = hooks.useState<string | undefined>(undefined);
-        const [folderOverlayId, setFolderOverlayId] = hooks.useState<string | undefined>(undefined);
-        const [layout, setLayout] = hooks.useState<DrawerLayout>(stored.layout);
-        const [query, setQuery] = hooks.useState("");
-        const [revision, setRevision] = hooks.useState(0);
-        const [serverOrder, setServerOrder] = hooks.useState<readonly string[]>(stored.serverOrder);
-        const [view, setView] = hooks.useState<DrawerView>("servers");
-        const [viewportHeight, setViewportHeight] = hooks.useState(initialWindowHeight);
-        const [viewportWidth, setViewportWidth] = hooks.useState(initialWindowWidth);
-        const [dragHeight, setDragHeight] = hooks.useState<number | undefined>(undefined);
-        const dragPosition = hooks.useRef<DragPoint | undefined>(undefined);
-        const floatingPreviewHandle = hooks.useRef<NativeDragPreview | null>(null);
-        const gesture = hooks.useRef<GestureState | undefined>(undefined);
-        const pendingDmOrder = hooks.useRef<readonly string[] | undefined>(undefined);
-        const pendingServerOrder = hooks.useRef<readonly string[] | undefined>(undefined);
-        const reorder = hooks.useRef<ReorderState | undefined>(undefined);
-        const exitTarget = hooks.useRef<{ measureInWindow(callback: (x: number, y: number, width: number, height: number) => void): void } | null>(null);
-        const exitBounds = hooks.useRef<DropBounds | undefined>(undefined);
-        const measureExitTarget = (): void => {
+
+    function useReorder(directMessages: readonly t.DirectMessage[], previewTransform: (point: t.DragPoint) => Native.ViewStyle["transform"]) {
+        const [, refresh] = useReducer(value => value + 1, 0);
+        const reorder = useRef<t.ReorderState | undefined>(undefined);
+        const previewRef = useRef<Native.View | null>(null);
+        const exitTarget = useRef<Native.View | null>(null);
+        const exitBounds = useRef<Native.LayoutRectangle | undefined>(undefined);
+
+        const measureExit = () => {
             const target = exitTarget.current;
             exitBounds.current = undefined;
             target?.measureInWindow((x, y, width, height) => {
                 if (exitTarget.current === target) exitBounds.current = { x, y, width, height };
             });
         };
-        const suppressedPresses = hooks.useRef(new Set<string>());
-        const folderPager = hooks.useRef<{ scrollTo?:(options: Readonly<Record<string, unknown>>) => void } | null>(null);
-        const scrollY = hooks.useRef(0);
-        const refresh = hooks.useCallback((): void => setRevision(previous => previous + 1), []);
-        const refreshPreferences = hooks.useCallback((): void => {
-            try {
-                const next = preferences.get();
-                setDmOrder(normalizedOrder(next.dmOrder));
-                setLayout(normalizedLayout(next.layout));
-                setServerOrder(normalizedOrder(next.serverOrder));
-            } catch {}
-        }, [preferences]);
-        useAbortableSubscription(hooks, signal, controller.subscribe, refresh);
-        useAbortableSubscription(hooks, signal, preferences.subscribe, refreshPreferences);
-        const model = hooks.useMemo(() => {
-            let snapshot = EMPTY_SNAPSHOT;
-            try {
-                snapshot = controller.snapshot();
-            } catch {}
-            let nodes: readonly DrawerNode[] = Object.freeze([]);
-            try {
-                nodes = parseGuildTree(snapshot.tree, {
-                    readState: guildId => controller.readState(guildId),
-                    resolveGuild: guildId => controller.resolveGuild(guildId),
-                });
-            } catch {}
-            return { nodes, snapshot };
-        }, [controller, revision]);
-        const nodes = orderedNodes(model.nodes, serverOrder);
-        const directMessages = orderedByIds((model.snapshot.privateChannels ?? []).map(channel => {
-            let state: GuildReadState = { mentions: 0, unread: false };
-            try {
-                state = controller.readPrivateChannelState?.(channel.id) ?? state;
-            } catch {}
-            const mentions = typeof state.mentions === "number" && Number.isFinite(state.mentions)
-                ? Math.max(0, Math.floor(state.mentions))
-                : 0;
-            const unread = state.unread === true;
-            const mentionLabel = mentions > 0
-                ? mentions > 99 ? "99+" : String(mentions)
-                : undefined;
-            return Object.freeze({
-                ...channel,
-                mentionLabel,
-                mentions,
-                unread,
-            });
-        }), dmOrder);
-        const selectedGuildId = model.snapshot.selectedGuildId;
-        const selectedPrivateChannelId = model.snapshot.selectedPrivateChannelId;
-        const dockSpecs = computeGuildDockSpecs(Math.max(80, viewportWidth - 16));
-        const dockedHeight = dockSpecs.dockHeight - DOCK_REST_OFFSET;
-        const availableDrawerHeight = Math.max(
-            dockSpecs.dockHeight,
-            viewportHeight - bottomInset - DRAWER_MIN_INSET,
-        );
-        const drawerHeight = Math.max(
-            dockSpecs.dockHeight,
-            Math.min(DRAWER_MAX_HEIGHT, availableDrawerHeight < DRAWER_MIN_HEIGHT
-                ? availableDrawerHeight
-                : Math.max(DRAWER_MIN_HEIGHT, availableDrawerHeight)),
-        );
-        const currentHeight = dragHeight ?? (expanded ? drawerHeight : dockedHeight);
-        const reveal = Math.max(0, Math.min(1, (currentHeight - dockedHeight) / DRAWER_REVEAL_DISTANCE));
-        const [rollProgress, setRollProgress] = hooks.useState(reveal);
-        hooks.useEffect(() => {
-            if (gesture.current?.claimed || Math.abs(rollProgress - reveal) < 0.001) {
-                setRollProgress(reveal);
-                return;
-            }
-            const from = rollProgress;
-            const started = Date.now();
-            const timer = setInterval(() => {
-                const elapsed = Math.min(1, (Date.now() - started) / 180);
-                setRollProgress(from + (reveal - from) * (1 - (1 - elapsed) ** 3));
-                if (elapsed === 1) clearInterval(timer);
-            }, 16);
-            return () => clearInterval(timer);
-        }, [reveal]);
-        const roll = gesture.current?.claimed ? reveal : rollProgress;
-        const compactFaceHeight = dockSpecs.dockHeight - 16;
-        const rollAngle = roll * Math.PI / 2;
-        const rollSeam = compactFaceHeight * Math.cos(rollAngle) / (1 + compactFaceHeight * Math.sin(rollAngle) / 900);
-        const drawerVisible = expanded || reveal > 0.5;
-        const panelWidth = dockSpecs.dockWidth;
-        const panelLeft = Math.max(0, Math.round((viewportWidth - panelWidth) / 2));
-        const drawerFolder = folderId === undefined
-            ? undefined
-            : nodes.find((node): node is DrawerFolder => node.kind === "folder" && node.id === folderId);
-        const overlayFolder = folderOverlayId === undefined
-            ? undefined
-            : nodes.find((node): node is DrawerFolder => node.kind === "folder" && node.id === folderOverlayId);
-        const compactItems = buildCompactDockItems(nodes, dockSpecs);
-        const visibleServers = filteredNodes(nodes, filter, query, drawerFolder);
-        const search = normalizedQuery(query);
-        const visibleDms = directMessages.filter(directMessage => (
-            (!search || directMessage.name.toLocaleLowerCase().includes(search))
-            && (filter === "all" || directMessage.unread)
-        ));
-        const visible = view === "servers" ? visibleServers : visibleDms;
-        const visibleIds = visible.map(item => item.id);
-        const columns = layout === "grid"
-            ? Math.max(3, Math.floor(
-                (panelWidth - DRAWER_SIDE_PADDING * 2 + DRAWER_GAP)
-                / (DRAWER_ITEM_WIDTH + DRAWER_GAP),
-            ))
-            : 1;
-        const gridColumnGap = columns > 1
-            ? Math.max(
-                DRAWER_GAP,
-                (panelWidth - DRAWER_SIDE_PADDING * 2 - columns * DRAWER_ITEM_WIDTH) / (columns - 1),
-            )
-            : 0;
-        const previewWidth = layout === "grid" ? DRAWER_ITEM_WIDTH : Math.max(1, panelWidth - 20);
-        const previewTransform = (point: DragPoint): readonly Readonly<Record<string, unknown>>[] => (
-            layout === "grid"
-                ? [
-                    { translateX: point.x },
-                    { translateY: point.y },
-                    { translateX: -previewWidth / 2 },
-                    { translateY: -41 },
-                    { translateY: -7 },
-                    { scale: 1.07 },
-                ]
-                : [
-                    { translateY: point.y },
-                    { translateY: -34 },
-                    { translateY: -7 },
-                    { scale: 1.025 },
-                ]
-        );
-        hooks.useEffect(() => {
-            if (folderId && !drawerFolder) setFolderId(undefined);
-            if (folderOverlayId && !overlayFolder) setFolderOverlayId(undefined);
-        }, [drawerFolder, folderId, folderOverlayId, overlayFolder]);
-        hooks.useEffect(() => {
-            scrollY.current = 0;
-        }, [filter, folderId, layout, query]);
-        hooks.useEffect(() => {
-            setFolderPage(0);
-        }, [folderOverlayId]);
-        hooks.useEffect(() => {
-            if ((!expanded && !folderId && !folderOverlayId) || signal.aborted || !controller.addBackHandler) {
-                return () => undefined;
-            }
-            const close = (): boolean => {
-                if (folderOverlayId) {
-                    setFolderOverlayId(undefined);
-                } else if (folderId) {
-                    setFolderId(undefined);
-                } else {
-                    try {
-                        controller.animateNext?.();
-                    } catch {}
-                    setExpanded(false);
-                    setDragHeight(undefined);
-                }
-                return true;
-            };
-            let cleanup: Unpatch = once(() => undefined);
-            try {
-                cleanup = once(controller.addBackHandler(close) ?? (() => undefined));
-            } catch {}
-            const abort = (): void => cleanup();
-            signal.addEventListener("abort", abort, { once: true });
-            if (signal.aborted) cleanup();
-            return () => {
-                signal.removeEventListener("abort", abort);
-                cleanup();
-            };
-        }, [controller, expanded, folderId, folderOverlayId, signal]);
-        if (signal.aborted) return null;
-        const setDrawerOpen = (open: boolean): void => {
-            try {
-                controller.animateNext?.();
-            } catch {}
-            try {
-                controller.haptic?.();
-            } catch {}
-            setExpanded(open);
-            setDragHeight(undefined);
-            if (!open) {
-                setFolderId(undefined);
-                setQuery("");
-                scrollY.current = 0;
-            }
+
+        const begin = (source: t.DrawerItem, point: t.DragPoint, items: readonly t.DrawerItem[], geometry: t.ReorderGeometry, openMenu?: () => void) => {
+            const from = items.indexOf(source);
+            if (from < 0) return;
+            measureExit();
+            reorder.current = { ...geometry, source, items, from, target: from, start: point, point, openMenu };
+            controller.animateNext(90);
+            refresh();
         };
-        const selectGuild = (guild: DrawerGuild): void => {
-            setFolderOverlayId(undefined);
-            let selected = false;
-            try {
-                selected = controller.selectGuild(guild.id);
-            } catch {}
-            if (selected && (expanded || drawerVisible)) setDrawerOpen(false);
-        };
-        const selectDirectMessage = (directMessage: DirectMessage): void => {
-            let selected = false;
-            try {
-                selected = controller.selectPrivateChannel?.(directMessage.id) === true;
-            } catch {}
-            if (selected && (expanded || drawerVisible)) setDrawerOpen(false);
-        };
-        const consumeSuppressedPress = (itemView: DrawerView, id: string): boolean => {
-            const key = `${itemView}:${id}`;
-            if (!suppressedPresses.current.has(key)) return false;
-            suppressedPresses.current.delete(key);
-            return true;
-        };
-        const beginReorder = (
-            itemView: DrawerView,
-            id: string,
-            event: unknown,
-            ids: readonly string[],
-            itemColumns = columns,
-            columnStep = DRAWER_ITEM_WIDTH + gridColumnGap,
-            rowStep?: number,
-        ): boolean => {
-            const startX = eventCoordinate(event, "pageX");
-            const startY = eventCoordinate(event, "pageY");
-            const sourceIndex = ids.indexOf(id);
-            if (startX === undefined || startY === undefined || sourceIndex < 0) return false;
-            gesture.current = undefined;
-            measureExitTarget();
-            setOverExitTarget(false);
-            reorder.current = {
-                columnStep,
-                columns: itemColumns,
-                ids,
-                initialOrder: itemView === "servers" ? serverOrder : dmOrder,
-                layout: folderOverlayId ? "grid" : layout,
-                rowStep: rowStep ?? (layout === "grid" ? 82 + DRAWER_GAP : 72),
-                sourceId: id,
-                sourceFolderId: itemView === "servers" ? guildsInTreeOrder(nodes).find(guild => guild.id === id)?.folderId : undefined,
-                sourceIndex,
-                startX,
-                startY,
-                targetId: id,
-                view: itemView,
-            };
-            suppressedPresses.current.add(`${itemView}:${id}`);
-            pendingDmOrder.current = undefined;
-            pendingServerOrder.current = undefined;
-            const point = { x: startX, y: startY };
-            dragPosition.current = point;
-            setDragPoint(point);
-            setDragTargetId(id);
-            try {
-                controller.animateNext?.(90);
-            } catch {}
-            setDraggingId(`${itemView}:${id}`);
-            try {
-                controller.haptic?.("medium");
-            } catch {}
-            return true;
-        };
-        const moveReorder = (event: unknown): boolean => {
+
+        const move = ({ x, y }: t.DragPoint) => {
             const active = reorder.current;
-            if (!active) return false;
-            const x = eventCoordinate(event, "pageX");
-            const y = eventCoordinate(event, "pageY");
-            if (x === undefined || y === undefined) return true;
-            const point = { x, y };
-            if (Math.hypot(x - active.startX, y - active.startY) > 10) active.moved = true;
-            dragPosition.current = point;
-            try {
-                floatingPreviewHandle.current?.setNativeProps?.({ style: { transform: previewTransform(point) } });
-            } catch {}
-            active.removeFromFolder = active.view === "servers" && !!active.sourceFolderId
-                && !!exitTarget.current && hitsDropTarget(point, exitBounds.current);
-            setOverExitTarget(active.removeFromFolder);
-            if (active.removeFromFolder) {
-                active.mergeSince = undefined;
-                active.targetId = active.sourceId;
-                pendingServerOrder.current = undefined;
-                setMergeTargetId(undefined);
-                setDragTargetId(active.sourceId);
-                return true;
-            }
-            const indexDelta = active.layout === "grid"
-                ? Math.round((x - active.startX) / active.columnStep)
-                    + Math.round((y - active.startY) / active.rowStep) * active.columns
-                : Math.round((y - active.startY) / active.rowStep);
-            const targetIndex = Math.max(0, Math.min(active.ids.length - 1, active.sourceIndex + indexDelta));
-            const targetId = active.ids[targetIndex];
-            const sourceGuild = guildsInTreeOrder(nodes).find(guild => guild.id === active.sourceId);
-            const targetGuild = guildsInTreeOrder(nodes).find(guild => guild.id === targetId);
-            const targetFolder = nodes.find(node => node.kind === "folder" && node.id === targetId);
-            const columnDelta = targetIndex % active.columns - active.sourceIndex % active.columns;
-            const rowDelta = Math.floor(targetIndex / active.columns) - Math.floor(active.sourceIndex / active.columns);
-            const centered = active.layout === "grid"
-                ? Math.abs(x - active.startX - columnDelta * active.columnStep) < 22
-                    && Math.abs(y - active.startY - rowDelta * active.rowStep) < 22
-                : Math.abs(y - active.startY - (targetIndex - active.sourceIndex) * active.rowStep) < 20;
-            const canMerge = active.view === "servers" && sourceGuild && targetId !== active.sourceId && centered
-                && (targetFolder ? sourceGuild.folderId !== targetId : targetGuild && (!sourceGuild.folderId || sourceGuild.folderId !== targetGuild.folderId));
-            active.mergeSince = canMerge ? active.targetId === targetId ? active.mergeSince ?? Date.now() : Date.now() : undefined;
-            setMergeTargetId(canMerge ? targetId : undefined);
-            if (!targetId || targetId === active.targetId) return true;
-            active.targetId = targetId;
-            setDragTargetId(targetId);
-            try {
-                controller.animateNext?.(90);
-            } catch {}
-            if (active.view === "servers") {
-                const next = movedOrder(
-                    active.initialOrder,
-                    nodeIds(nodes),
-                    active.sourceId,
-                    targetId,
-                );
-                pendingServerOrder.current = next;
-            } else {
-                const next = movedOrder(
-                    active.initialOrder,
-                    directMessages.map(directMessage => directMessage.id),
-                    active.sourceId,
-                    targetId,
-                );
-                pendingDmOrder.current = next;
-            }
-            return true;
+            if (!active) return;
+
+            const { source, from, columns, columnStep, rowStep, target: previousTarget, mergeSince, outside } = active;
+            const dx = x - active.start.x, dy = y - active.start.y;
+            const grid = active.layout === "grid";
+
+            active.point = { x, y };
+            active.moved ||= Math.hypot(dx, dy) > 10;
+            previewRef.current?.setNativeProps({ style: { transform: previewTransform(active.point) } });
+
+            active.outside = source.kind === "guild" && !!source.folderId && !!exitTarget.current && hitsDropTarget(active.point, exitBounds.current);
+            active.target = active.outside ? from : clamp(from + Math.round(dy / rowStep) * columns + (grid ? Math.round(dx / columnStep) : 0), 0, active.items.length - 1);
+
+            const target = active.items[active.target];
+            const row = Math.floor(active.target / columns) - Math.floor(from / columns);
+            const column = active.target % columns - from % columns;
+            const centered = Math.abs(dy - row * rowStep) < (grid ? 22 : 20)
+                && (!grid || Math.abs(dx - column * columnStep) < 22);
+            const merge = source.kind === "guild" && target.kind && from !== active.target && centered
+                && (target.kind === "folder" ? source.folderId !== target.id : !source.folderId || source.folderId !== target.folderId);
+            active.mergeSince = merge ? previousTarget === active.target ? mergeSince ?? Date.now() : Date.now() : undefined;
+
+            if (outside !== active.outside || !!mergeSince !== !!active.mergeSince || previousTarget !== active.target) refresh();
+            if (previousTarget !== active.target && !active.outside) controller.animateNext(90);
         };
-        const finishReorder = (showMenu = false): boolean => {
-            const active = reorder.current;
-            if (!active) return false;
+
+        const cancel = () => {
+            if (!reorder.current) return;
             reorder.current = undefined;
+            controller.animateNext(110);
+            refresh();
+        };
+
+        const finish = async (showMenu = false) => {
+            const active = reorder.current;
+            if (!active) return;
+            cancel();
+
+            const { source, items, target, from, outside, moved, mergeSince, layout } = active;
+            if (showMenu && !moved) return active.openMenu?.();
+
             try {
-                controller.animateNext?.(110);
-                controller.haptic?.();
-            } catch {}
-            dragPosition.current = undefined;
-            setDragPoint(undefined);
-            setDragTargetId(undefined);
-            setMergeTargetId(undefined);
-            setDraggingId(undefined);
-            setOverExitTarget(false);
-            if (showMenu && active.view === "servers" && !active.moved
-                && guildsInTreeOrder(nodes).some(guild => guild.id === active.sourceId)) {
-                pendingDmOrder.current = undefined;
-                pendingServerOrder.current = undefined;
-                openGuildMenu(active.sourceId, active.startX, active.startY);
-                return true;
-            }
-            try {
-                if (active.view === "servers") {
-                    const next = pendingServerOrder.current;
-                    let changed = false;
-                    if (active.removeFromFolder && active.sourceFolderId) {
-                        changed = controller.removeGuildFromFolder?.(active.sourceId, active.sourceFolderId) === true;
-                        if (!changed) throw new Error("Folder membership changed during drag");
-                    } else if (next && active.sourceId !== active.targetId) {
-                        const merge = active.mergeSince !== undefined && (active.layout === "grid" || Date.now() - active.mergeSince >= 450);
-                        changed = (merge ? controller.dropGuild?.(active.sourceId, active.targetId)
-                            : controller.moveGuild?.(active.sourceId, active.targetId)) === true;
-                        if (!changed) throw new Error("Drop target is no longer available");
-                    }
-                    if (changed) {
-                        setServerOrder([]);
-                        preferences.update({ serverOrder: [] });
-                    }
-                } else if (pendingDmOrder.current) {
-                    preferences.update({ dmOrder: pendingDmOrder.current });
-                    setDmOrder(pendingDmOrder.current);
+                if (!source.kind) {
+                    const dmOrder = directMessages.map(item => item.id);
+                    const sourceIndex = dmOrder.indexOf(source.id), targetIndex = dmOrder.indexOf(items[target].id);
+                    if (from === target || sourceIndex < 0 || targetIndex < 0) return;
+                    dmOrder.splice(targetIndex, 0, ...dmOrder.splice(sourceIndex, 1));
+                    preferences.set({ dmOrder });
+                } else {
+                    const merge = mergeSince !== undefined && (layout === "grid" || Date.now() - mergeSince >= 450);
+                    const exit = outside && source.kind === "guild" && source.folderId;
+                    if (!exit && from === target) return;
+                    if (await controller.commitDrop(source.id, exit || items[target].id, exit ? "exit" : merge ? "merge" : "move") === false)
+                        throw new Error("Drop target is no longer available");
                 }
             } catch (error) { reportActionFailure("move this item", error); }
-            pendingDmOrder.current = undefined;
-            pendingServerOrder.current = undefined;
-            return true;
         };
-        const cancelReorder = (): boolean => {
+
+        const offset = (id: string) => {
             const active = reorder.current;
-            if (!active) return false;
-            reorder.current = undefined;
-            try {
-                controller.animateNext?.(110);
-            } catch {}
-            pendingDmOrder.current = undefined;
-            pendingServerOrder.current = undefined;
-            dragPosition.current = undefined;
-            setDragPoint(undefined);
-            setDragTargetId(undefined);
-            setMergeTargetId(undefined);
-            setDraggingId(undefined);
-            setOverExitTarget(false);
-            return true;
+            // Keep grid targets under the finger; only list rows shift.
+            if (!active || active.layout === "grid" || active.mergeSince !== undefined) return;
+            const { from, target, rowStep } = active;
+            const index = active.items.findIndex(item => item.id === id);
+            if (index < 0) return;
+
+            return from < target ? index > from && index <= target ? -rowStep : undefined
+                : index >= target && index < from ? rowStep : undefined;
         };
-        const reorderOffset = (itemView: DrawerView, id: string): DragPoint | undefined => {
-            if (mergeTargetId) return undefined;
-            const active = reorder.current;
-            if (!active || active.view !== itemView || active.sourceId === id) return undefined;
-            // Keep grid drop targets fixed so reordering cannot move a folder target away from the finger.
-            if (active.layout === "grid") return undefined;
-            const itemIndex = active.ids.indexOf(id);
-            const targetIndex = active.ids.indexOf(dragTargetId ?? active.targetId);
-            if (itemIndex < 0 || targetIndex < 0 || targetIndex === active.sourceIndex) return undefined;
-            const indexShift = active.sourceIndex < targetIndex
-                ? itemIndex > active.sourceIndex && itemIndex <= targetIndex ? -1 : 0
-                : itemIndex >= targetIndex && itemIndex < active.sourceIndex ? 1 : 0;
-            if (indexShift === 0) return undefined;
-            return { x: 0, y: indexShift * active.rowStep };
+
+        return { reorder, previewRef, exitTarget, measureExit, begin, finish, offset,
+            handlers: { onMove: move, onCancel: cancel, onDrop: (point: t.DragPoint) => { move(point); finish(true); } } };
+    }
+
+    function useDrawerMotion(expanded: boolean, minimum: number, maximum: number, scroll: React.RefObject<number>,
+        reorder: React.RefObject<t.ReorderState | undefined>, onOpen: (open: boolean) => void) {
+        const [height, setHeight] = useState<number>();
+        const origin = useRef({ height: 0, y: 0, lastMove: 0, rejected: false });
+        const cancel = () => setHeight(undefined);
+        const move = (event: Native.GestureResponderEvent) => {
+            origin.current.lastMove = Date.now();
+            setHeight(clamp(origin.current.height - event.nativeEvent.pageY + origin.current.y, minimum, maximum));
         };
-        const changeView = (next: DrawerView): void => {
-            if (view === next) return;
-            finishReorder();
-            setFolderId(undefined);
-            setFolderOverlayId(undefined);
-            setQuery("");
-            setView(next);
-            try {
-                controller.haptic?.();
-            } catch {}
-        };
-        const openFolderOverlay = (folder: DrawerFolder): void => {
-            try {
-                controller.haptic?.();
-            } catch {}
-            setFolderOverlayId(folder.id);
-        };
-        const beginGesture = (event: unknown): void => {
-            if (reorder.current) return;
-            // Suppress only the release of the previous hold/drag, never a new touch.
-            suppressedPresses.current.clear();
-            const x = eventCoordinate(event, "pageX");
-            const y = eventCoordinate(event, "pageY");
-            if (x === undefined || y === undefined) {
-                gesture.current = undefined;
-                return;
-            }
-            const now = Date.now();
-            gesture.current = {
-                claimed: false,
-                height: expanded ? drawerHeight : dockedHeight,
-                lastAt: now,
-                lastY: y,
-                velocity: 0,
-                x,
-                y,
-            };
-        };
-        const moveGesture = (event: unknown): void => {
-            if (moveReorder(event)) return;
-            const active = gesture.current;
-            const y = eventCoordinate(event, "pageY");
-            if (!active || y === undefined) return;
-            const distance = y - active.y;
-            if (!active.claimed) {
-                const horizontal = Math.abs((eventCoordinate(event, "pageX") ?? active.x) - active.x);
-                if (horizontal > Math.abs(distance) && horizontal > SWIPE_DISTANCE) {
-                    gesture.current = undefined;
-                    return;
-                }
-                const opens = !expanded && distance < -SWIPE_DISTANCE;
-                // The native drawer runs simultaneously with its scroller. A plain RN responder
-                // cannot arbitrate that safely, so only claim the useful close direction at top.
-                const movesDrawer = expanded && distance > SWIPE_DISTANCE && scrollY.current <= 0;
-                if (!opens && !movesDrawer) {
-                    if (Math.abs(distance) > SWIPE_DISTANCE) gesture.current = undefined;
-                    return;
-                }
-                active.claimed = true;
-            }
-            const now = Date.now();
-            if (Math.abs(y - active.lastY) > 1) {
-                active.velocity = (y - active.lastY) / Math.max(1, now - active.lastAt) * 1_000;
-            }
-            active.lastAt = now;
-            active.lastY = y;
-            const nextHeight = Math.max(
-                dockedHeight,
-                Math.min(drawerHeight, active.height - distance),
-            );
-            setDragHeight(nextHeight);
-        };
-        const endGesture = (event: unknown): void => {
-            if (reorder.current) moveReorder(event);
-            if (finishReorder(true)) return;
-            if (gesture.current && !gesture.current.claimed) moveGesture(event);
-            const active = gesture.current;
-            gesture.current = undefined;
-            if (!active?.claimed) {
-                setDragHeight(undefined);
-                return;
-            }
-            const y = eventCoordinate(event, "pageY") ?? active.lastY;
-            const now = Date.now();
-            const distance = y - active.y;
-            const velocity = now - active.lastAt <= 120 ? active.velocity : 0;
-            const opens = distance <= -SWIPE_COMMIT_DISTANCE || (distance <= -SWIPE_DISTANCE && velocity <= -SWIPE_VELOCITY);
-            const closes = distance >= SWIPE_COMMIT_DISTANCE || (distance >= SWIPE_DISTANCE && velocity >= SWIPE_VELOCITY);
-            const open = opens || (!closes && expanded);
-            setDrawerOpen(open);
-        };
-        const releaseReorder = (event: unknown): void => {
-            if (!reorder.current) return;
-            moveReorder(event);
-            finishReorder(true);
-        };
-        const cancelGesture = (): void => {
-            // Activating GestureDetector cancels React Native's legacy touch responder. That
-            // cancellation bubbles through the drawer even though the native pan is still active;
-            // its own onFinalize callback is the sole authority for cancelling a native reorder.
-            if (nativeReorderAvailable && reorder.current) {
-                gesture.current = undefined;
-                return;
-            }
-            if (cancelReorder()) return;
-            gesture.current = undefined;
-            setDragHeight(undefined);
-        };
-        const changeLayout = (): void => {
-            const next: DrawerLayout = layout === "grid" ? "list" : "grid";
-            setLayout(next);
-            try {
-                preferences.update({ layout: next });
-                controller.haptic?.();
-            } catch {}
-        };
-        const openCreation = (): void => {
-            let opened = false;
-            try {
-                opened = view === "servers"
-                    ? controller.openCreateGuild?.() === true
-                    : controller.openCreateDm?.() === true;
-            } catch {}
-            if (opened) setDrawerOpen(false);
-        };
-        const handle = <Pressable
-            accessibilityActions={[{ label: drawerVisible ? "Collapse" : "Expand", name: "activate" }]}
-            accessibilityLabel={drawerVisible ? "Collapse server drawer" : "Expand server drawer"}
-            accessibilityRole="button"
-            accessibilityState={{ expanded: drawerVisible }}
-            hitSlop={{ bottom: 14, left: 14, right: 14, top: 14 }}
-            onAccessibilityAction={() => setDrawerOpen(!drawerVisible)}
-            onPress={() => setDrawerOpen(!drawerVisible)}
-            style={{ alignItems: "center", height: 16, justifyContent: "center", width: "100%" }}
-        >
-            <View style={{ backgroundColor: palette.muted, borderRadius: 3, height: 5, opacity: 0.5, width: 38 }} />
+        const callbacks = useRef<Native.PanResponderCallbacks>({}).current;
+        // PanResponder reads this same config object for every event.
+        Object.assign(callbacks, {
+            onStartShouldSetPanResponderCapture: () => { origin.current.rejected = false; return false; },
+            onMoveShouldSetPanResponderCapture: (event, { dx, dy }) => {
+                if (Math.abs(dx) > SWIPE_DISTANCE && Math.abs(dx) > Math.abs(dy)
+                    || Math.abs(dy) > SWIPE_DISTANCE && (expanded ? dy < 0 || scroll.current > 0 : dy > 0)) origin.current.rejected = true;
+                if (origin.current.rejected || reorder.current || Math.abs(dy) <= SWIPE_DISTANCE) return false;
+                origin.current.height = expanded ? maximum : minimum;
+                origin.current.y = event.nativeEvent.pageY - dy;
+
+                return true;
+            },
+            onPanResponderGrant: move,
+            onPanResponderMove: move,
+            onPanResponderRelease: (event, { vy }) => {
+                const distance = event.nativeEvent.pageY - origin.current.y;
+                const velocity = Date.now() - origin.current.lastMove <= 120 ? vy * 1000 : 0;
+                const commit = Math.abs(distance) >= 24
+                    || Math.abs(distance) >= SWIPE_DISTANCE && Math.sign(distance) * velocity >= 200;
+                onOpen(commit ? distance < 0 : expanded);
+            },
+            onPanResponderTerminate: cancel,
+        } satisfies Native.PanResponderCallbacks);
+        const [pan] = useState(() => Native.PanResponder.create(callbacks));
+
+        const currentHeight = height ?? (expanded ? maximum : minimum);
+        const reveal = clamp((currentHeight - minimum) / 120, 0, 1);
+        const [rollProgress, setRollProgress] = useState(reveal);
+
+        useEffect(() => {
+            if (height !== undefined) return setRollProgress(reveal);
+            const value = new Native.Animated.Value(rollProgress);
+            value.addListener(({ value }) => setRollProgress(value));
+            const animation = Native.Animated.timing(value, { toValue: reveal, duration: 180,
+                easing: Native.Easing.out(Native.Easing.cubic), useNativeDriver: false });
+            animation.start();
+
+            return () => { animation.stop(); value.removeAllListeners(); };
+        }, [reveal]);
+
+        const roll = height !== undefined ? reveal : rollProgress;
+        const compactFaceHeight = minimum + DOCK_REST_OFFSET - 16;
+        const rollAngle = roll * Math.PI / 2;
+        const rollSeam = compactFaceHeight * Math.cos(rollAngle) / (1 + compactFaceHeight * Math.sin(rollAngle) / 900);
+
+        return { height: currentHeight, visible: expanded || reveal > 0.5, cancel, handlers: pan.panHandlers,
+            compactStyle: { height: compactFaceHeight, opacity: roll < 1 ? 1 : 0, transform: [{ perspective: 900 }, { rotateX: `${-90 * roll}deg` }] } satisfies Native.ViewStyle,
+            expandedStyle: { top: 16 + rollSeam, height: roll < 1 ? compactFaceHeight : maximum - 16, opacity: roll > 0 ? 1 : 0, transform: [{ perspective: 900 }, { rotateX: `${90 * (1 - roll)}deg` }] } satisfies Native.ViewStyle };
+    }
+
+    function FolderOverlay({ folder, width, height, closeFolder, renderItem, handlers }: t.FolderOverlayProps) {
+        const styles = useStyles();
+        const TEXT_DEFAULT: string = useToken(semanticColors.TEXT_DEFAULT);
+        const TEXT_MUTED: string = useToken(semanticColors.TEXT_MUTED);
+        const [folderPage, setFolderPage] = useState(0);
+        const folderPager = useRef<Native.ScrollView | null>(null);
+
+        const folderHeight = clamp(height - 64, 240, 360);
+        const pageSize = 3 * Math.max(1, Math.floor((folderHeight - 78) / 90));
+        const pages = Array.from({ length: Math.ceil(folder.children.length / pageSize) }, (_, index) => folder.children.slice(index * pageSize, (index + 1) * pageSize));
+        const folderSize = clamp(width - 32, 240, 320);
+
+        return <Pressable accessibilityLabel="Close server folder" accessibilityRole="button" onAccessibilityEscape={closeFolder}
+            onPress={closeFolder} {...handlers} style={[styles.folderBackdrop, { backgroundColor: "rgba(0, 0, 0, 0.82)" }]}>
+            <Pressable accessibilityLabel={folder.name ?? "Unnamed folder"} accessibilityRole="summary"
+                onPress={event => event.stopPropagation()} style={[styles.folderPanel, { height: folderHeight, width: folderSize }]}>
+                <ScrollView horizontal pagingEnabled ref={folderPager} showsHorizontalScrollIndicator={false} style={{ height: folderHeight, width: folderSize }}
+                    onMomentumScrollEnd={(event: Native.NativeSyntheticEvent<Native.NativeScrollEvent>) =>
+                        setFolderPage(clamp(Math.round(event.nativeEvent.contentOffset.x / folderSize), 0, Math.max(0, pages.length - 1)))}>
+                    {pages.map((page, pageIndex) => <View key={`folder-page-${pageIndex}`} style={[styles.folderPage, { height: folderHeight, width: folderSize }]}>{page.map(renderItem)}</View>)}
+                </ScrollView>
+                <FolderTitle key={folder.id} folder={folder} style={styles.folderHeading} />
+                {pages.length > 1 ? <View pointerEvents="box-none" style={styles.pageDots}>
+                    {pages.map((_page, index) => <Pressable key={`folder-dot-${index}`} accessibilityRole="button"
+                        accessibilityLabel={`Folder page ${index + 1}`} accessibilityState={{ selected: index === folderPage }}
+                        onPress={() => {
+                            setFolderPage(index);
+                            folderPager.current?.scrollTo({ animated: true, x: index * folderSize, y: 0 });
+                        }} style={[styles.pageDot, { backgroundColor: index === folderPage ? TEXT_DEFAULT : TEXT_MUTED }]} />)}
+                </View> : null}
+            </Pressable>
         </Pressable>;
-        const renderCompactItem = (item: CompactDockItem): any => {
-            switch (item.kind) {
-                case "dm":
-                    return <Pressable key={item.key} accessibilityRole="button"
-                        accessibilityLabel="Direct Messages"
-                        onPress={() => {
-                            setView("dms");
-                            setFolderId(undefined);
-                            setFolderOverlayId(undefined);
-                            setQuery("");
-                            setFilter("all");
-                            setDrawerOpen(true);
-                        }} style={{ alignItems: "center", justifyContent: "center", backgroundColor: palette.surface,
-                            borderRadius: 16, height: dockSpecs.itemSize, width: dockSpecs.itemSize }}>
-                        <ChatIcon color={palette.normal} />
-                    </Pressable>;
-                case "guild":
-                    return <CompactGuild
-                        guild={item.guild}
-                        key={item.key}
-                        onPress={() => selectGuild(item.guild)}
-                        onLongPress={event => openGuildMenu(item.guild.id, eventCoordinate(event, "pageX") ?? viewportWidth / 2, eventCoordinate(event, "pageY") ?? viewportHeight / 2)}
-                        selected={item.guild.id === selectedGuildId}
-                        size={dockSpecs.itemSize}
-                    />;
-                case "folder":
-                    return <CompactFolder
-                        folder={item.folder}
-                        key={item.key}
-                        onPress={() => openFolderOverlay(item.folder)}
-                        size={dockSpecs.itemSize}
-                    />;
-                case "create":
-                    return <CreateButton
-                        key={item.key}
-                        onPress={() => {
-                            try {
-                                controller.openCreateGuild?.();
-                            } catch {}
-                        }}
-                        size={dockSpecs.itemSize}
-                    />;
-                case "unavailable":
-                    return <UnavailableButton
-                        count={item.count}
-                        key={item.key}
-                        size={dockSpecs.itemSize}
-                    />;
-                case "overflow":
-                    return <OverflowButton key={item.key} onPress={() => setDrawerOpen(true)} size={dockSpecs.itemSize} />;
-                case "divider":
-                    return <View key={item.key} style={{
-                        alignSelf: "center",
-                        backgroundColor: palette.border,
-                        height: Math.round(dockSpecs.itemSize * 0.7),
-                        marginHorizontal: -5.5,
-                        width: 1,
-                    }} />;
-                case "spacer":
-                    return <View
-                        accessibilityElementsHidden={true}
-                        importantForAccessibility="no-hide-descendants"
-                        key={item.key}
-                        style={{ height: dockSpecs.itemSize, opacity: 0, width: dockSpecs.itemSize }}
-                    />;
-            }
-        };
-        const compactContent = <View style={{ flex: 1 }}>
-            <View style={{
-                alignItems: "center",
-                flexDirection: "row",
-                gap: 10,
-                height: dockSpecs.itemSize,
-                paddingHorizontal: 20,
-            }}>
-                {compactItems.map(renderCompactItem)}
-            </View>
-        </View>;
-        const renderServerItem = (node: DrawerNode): any => {
-            const offset = reorderOffset("servers", node.id);
-            const item = <DrawerItem
-                merging={mergeTargetId === node.id}
-                dragging={draggingId === `servers:${node.id}`}
-                layout={layout}
-                nativeReorder={nativeReorderAvailable}
-                node={node}
-                onFolder={folder => {
-                    if (!consumeSuppressedPress("servers", folder.id)) setFolderId(folder.id);
-                }}
-                onGuild={guild => {
-                    if (!consumeSuppressedPress("servers", guild.id)) selectGuild(guild);
-                }}
-                onLongPress={(event: unknown) => beginReorder("servers", node.id, event, visibleIds)}
-                onPressOut={releaseReorder}
-                onTouchCancel={cancelGesture}
-                onTouchEnd={endGesture}
-                onTouchMove={moveReorder}
-                selectedGuildId={selectedGuildId}
-            />;
-            return nativeReorderAvailable
-                ? <NativeReorderTarget
-                    offset={offset}
-                    onCancel={cancelReorder}
-                    onDrop={releaseReorder}
-                    onMove={moveReorder}
-                    onStart={(event: unknown) => beginReorder("servers", node.id, event, visibleIds)}
-                >
-                    {item}
-                </NativeReorderTarget>
-                : <View style={offset
-                    ? { transform: [{ translateX: offset.x }, { translateY: offset.y }] }
-                    : undefined}
-                >
-                    {item}
-                </View>;
-        };
-        const renderDirectMessageItem = (directMessage: DirectMessage): any => {
-            const offset = reorderOffset("dms", directMessage.id);
-            const item = <DirectMessageItem
-                directMessage={directMessage}
-                dragging={draggingId === `dms:${directMessage.id}`}
-                layout={layout}
-                nativeReorder={nativeReorderAvailable}
-                onLongPress={(event: unknown) => beginReorder("dms", directMessage.id, event, visibleIds)}
-                onPress={() => {
-                    if (!consumeSuppressedPress("dms", directMessage.id)) selectDirectMessage(directMessage);
-                }}
-                onPressOut={releaseReorder}
-                onTouchCancel={cancelGesture}
-                onTouchEnd={endGesture}
-                onTouchMove={moveReorder}
-                selected={directMessage.id === selectedPrivateChannelId}
-            />;
-            return nativeReorderAvailable
-                ? <NativeReorderTarget
-                    offset={offset}
-                    onCancel={cancelReorder}
-                    onDrop={releaseReorder}
-                    onMove={moveReorder}
-                    onStart={(event: unknown) => beginReorder("dms", directMessage.id, event, visibleIds)}
-                >
-                    {item}
-                </NativeReorderTarget>
-                : <View style={offset
-                    ? { transform: [{ translateX: offset.x }, { translateY: offset.y }] }
-                    : undefined}
-                >
-                    {item}
-                </View>;
-        };
-        const renderItem = (entry: unknown): any => {
-            const item = (entry as { item?: DrawerNode | DirectMessage } | undefined)?.item;
-            if (!item) return null;
-            return view === "servers"
-                ? renderServerItem(item as DrawerNode)
-                : renderDirectMessageItem(item as DirectMessage);
-        };
-        const contentStyle = layout === "grid"
-            ? {
-                columnGap: gridColumnGap,
-                paddingBottom: 40,
-                paddingHorizontal: DRAWER_SIDE_PADDING,
-                paddingTop: 14,
-                rowGap: DRAWER_GAP,
-            }
-            : { gap: 4, paddingBottom: 40, paddingHorizontal: 10, paddingTop: 10 };
-        const empty = <View style={{ alignItems: "center", justifyContent: "center", minHeight: 180, padding: 24 }}>
-            <Text style={{ color: palette.normal, fontSize: 17, fontWeight: "600", textAlign: "center" }}>
-                {query.trim()
-                    ? `No ${view === "servers" ? "servers" : "direct messages"} match your search`
-                    : filter === "unread"
-                        ? "You're all caught up"
-                        : `No ${view === "servers" ? "servers" : "direct messages"} to show`}
-            </Text>
-        </View>;
-        const list = FlatList
-            ? <FlatList
-                columnWrapperStyle={columns > 1 ? { gap: gridColumnGap } : undefined}
-                contentContainerStyle={contentStyle}
-                data={visible}
-                initialNumToRender={20}
-                key={`${view}-${layout}-${columns}-${drawerFolder?.id ?? "root"}`}
-                keyExtractor={(item: DrawerNode | DirectMessage) => `${view}:${item.id}`}
-                ListEmptyComponent={empty}
-                maxToRenderPerBatch={20}
-                numColumns={columns}
-                onScroll={(event: unknown) => { scrollY.current = scrollOffset(event); }}
-                renderItem={renderItem}
-                scrollEventThrottle={16}
-                scrollEnabled={draggingId === undefined}
-                showsVerticalScrollIndicator={false}
-                style={{ flex: 1 }}
-                windowSize={7}
-            />
-            : <ScrollView
-                contentContainerStyle={{
-                    ...contentStyle,
-                    flexDirection: layout === "grid" ? "row" : "column",
-                    flexWrap: layout === "grid" ? "wrap" : "nowrap",
-                }}
-                onScroll={(event: unknown) => { scrollY.current = scrollOffset(event); }}
-                scrollEventThrottle={16}
-                scrollEnabled={draggingId === undefined}
-                showsVerticalScrollIndicator={false}
-                style={{ flex: 1 }}
-            >
-                {visible.length > 0
-                    ? view === "servers"
-                        ? visibleServers.map(node => <View key={node.id}>{renderServerItem(node)}</View>)
-                        : visibleDms.map(directMessage => (
-                            <View key={directMessage.id}>{renderDirectMessageItem(directMessage)}</View>
-                        ))
-                    : empty}
-            </ScrollView>;
-        const renderExitTarget = (): any => <View
-            ref={exitTarget} collapsable={false} onLayout={measureExitTarget} pointerEvents="none"
-            accessible accessibilityRole="image" accessibilityLabel="Move server out of folder"
-            accessibilityHint="Drag a server onto this arrow and release to make it standalone"
-            style={{ alignItems: "center", justifyContent: "center", width: 56, height: 56,
-                position: "absolute", left: viewportWidth / 2 - 28, bottom: bottomInset + 24,
-                zIndex: 110, elevation: 65 }}>
-            <Text style={{ color: overExitTarget ? palette.brand : palette.normal, fontSize: 36, lineHeight: 42,
-                transform: [{ scale: overExitTarget ? 1.15 : 1 }] }}>↶</Text>
-        </View>;
-        const drawerContent = <View style={{ flex: 1 }}>
-            <View style={{ alignItems: "center", flexDirection: "row", minHeight: 50, paddingHorizontal: 12 }}>
-                {drawerFolder
-                    ? <Pressable
-                        accessibilityLabel="Back to all servers"
-                        accessibilityRole="button"
-                        onPress={() => setFolderId(undefined)}
-                        style={{ alignItems: "center", height: 44, justifyContent: "center", width: 44 }}
-                    >
-                        <Text style={{ color: palette.normal, fontSize: 30 }}>‹</Text>
-                    </Pressable>
-                    : null}
-                {drawerFolder
-                    ? <FolderTitle key={drawerFolder.id} folder={drawerFolder} style={{ flex: 1, paddingVertical: 8 }} />
-                    : <View accessibilityRole="tablist" style={{
-                        backgroundColor: palette.input,
-                        borderRadius: 10,
-                        flex: 1,
-                        flexDirection: "row",
-                        padding: 3,
-                    }}>
-                        {(["servers", "dms"] as const).map(value => {
-                            const selected = view === value;
-                            const label = value === "servers" ? "Servers" : "Direct Messages";
-                            return <Pressable
-                                accessibilityLabel={label}
-                                accessibilityRole="tab"
-                                accessibilityState={{ selected }}
-                                key={value}
-                                onPress={() => changeView(value)}
-                                style={{
-                                    alignItems: "center",
-                                    backgroundColor: selected ? palette.surface : "transparent",
-                                    borderRadius: 8,
-                                    flex: 1,
-                                    justifyContent: "center",
-                                    minHeight: 36,
-                                    paddingHorizontal: 5,
-                                }}
-                            >
-                                <Text numberOfLines={1} style={{
-                                    color: selected ? palette.normal : palette.muted,
-                                    fontSize: 13,
-                                    fontWeight: selected ? "700" : "500",
-                                }}>
-                                    {label}
-                                </Text>
-                            </Pressable>;
-                        })}
-                    </View>}
-                <Pressable
-                    accessibilityLabel={`Switch to ${layout === "grid" ? "list" : "grid"} view`}
-                    accessibilityRole="button"
-                    onPress={changeLayout}
-                    style={{ alignItems: "center", height: 44, justifyContent: "center", width: 44 }}
-                >
-                    <HeaderLayoutIcon layout={layout} />
-                </Pressable>
-                {(view === "servers" ? controller.openCreateGuild : controller.openCreateDm)
-                    ? <Pressable
-                        accessibilityLabel={view === "servers" ? "Create a server" : "Start a direct message"}
-                        accessibilityRole="button"
-                        onPress={openCreation}
-                        style={{ alignItems: "center", height: 44, justifyContent: "center", width: 44 }}
-                    >
-                        <HeaderAddIcon />
-                    </Pressable>
-                    : null}
-            </View>
-            <View style={{ gap: 10, paddingHorizontal: 14, paddingVertical: 10 }}>
-                {TextInput
-                    ? <TextInput
-                        accessibilityLabel={view === "servers" ? "Search servers" : "Search direct messages"}
-                        onChange={(value: unknown) => {
-                            const text = changedText(value);
-                            if (text !== undefined) setQuery(text);
-                        }}
-                        onChangeText={setQuery}
-                        placeholder={view === "servers" ? "Search servers" : "Search direct messages"}
-                        placeholderTextColor={palette.muted}
-                        returnKeyType="search"
-                        style={{ backgroundColor: palette.input, color: palette.normal, minHeight: 42, paddingHorizontal: 12, borderRadius: 8 }}
-                        value={query}
-                    />
-                    : null}
-                <View accessibilityRole="tablist" style={{
-                    backgroundColor: palette.input,
-                    borderRadius: 9,
-                    flexDirection: "row",
-                    padding: 3,
-                }}>
-                    {(["all", "unread"] as const).map(value => {
-                        const selected = filter === value;
-                        return <Pressable
-                            accessibilityLabel={(value === "all" ? "All " : "Unread ")
-                                + (view === "servers" ? "servers" : "direct messages")}
-                            accessibilityRole="tab"
-                            accessibilityState={{ selected }}
-                            key={value}
-                            onPress={() => setFilter(value)}
-                            style={{
-                                alignItems: "center",
-                                backgroundColor: selected ? palette.surface : "transparent",
-                                borderRadius: 7,
-                                flex: 1,
-                                justifyContent: "center",
-                                minHeight: 36,
-                            }}
-                        >
-                            <Text style={{
-                                color: selected ? palette.normal : palette.muted,
-                                fontSize: 14,
-                                fontWeight: selected ? "700" : "500",
-                            }}>
-                                {value === "all" ? "All" : "Unreads"}
-                            </Text>
-                        </Pressable>;
-                    })}
-                </View>
-            </View>
-            {list}
-        </View>;
-        let folderOverlay: any = null;
-        if (overlayFolder) {
-            const folderHeight = Math.min(360, Math.max(240, viewportHeight - bottomInset - 64));
-            const pageSize = 3 * Math.max(1, Math.floor((folderHeight - 78) / 90));
-            const pages: DrawerGuild[][] = [];
-            for (let index = 0; index < overlayFolder.children.length; index += pageSize) {
-                pages.push(overlayFolder.children.slice(index, index + pageSize));
-            }
-            const folderSize = Math.min(320, Math.max(240, viewportWidth - 32));
-            folderOverlay = <Pressable
-                accessibilityLabel="Close server folder"
-                accessibilityRole="button"
-                onAccessibilityEscape={() => setFolderOverlayId(undefined)}
-                onPress={() => setFolderOverlayId(undefined)}
-                onTouchCancel={cancelGesture}
-                onTouchEnd={endGesture}
-                onTouchMove={moveGesture}
-                onTouchStart={beginGesture}
-                style={{
-                    alignItems: "center",
-                    backgroundColor: "rgba(0, 0, 0, 0.82)",
-                    bottom: 0,
-                    justifyContent: "center",
-                    left: 0,
-                    position: "absolute",
-                    right: 0,
-                    top: 0,
-                    zIndex: 60,
-                }}
-            >
-                <Pressable
-                    accessibilityLabel={overlayFolder.name ?? "Unnamed folder"}
-                    accessibilityRole="summary"
-                    onPress={safeStopPropagation}
-                    style={{
-                        alignItems: "center",
-                        backgroundColor: palette.surface,
-                        borderRadius: 40,
-                        elevation: 45,
-                        height: folderHeight,
-                        overflow: "hidden",
-                        width: folderSize,
-                    }}
-                >
-                    <ScrollView
-                        horizontal={true}
-                        onMomentumScrollEnd={(event: unknown) => {
-                            setFolderPage(Math.max(0, Math.min(
-                                pages.length - 1,
-                                Math.round(horizontalScrollOffset(event) / folderSize),
-                            )));
-                        }}
-                        pagingEnabled={true}
-                        ref={folderPager}
-                        showsHorizontalScrollIndicator={false}
-                        style={{ height: folderHeight, width: folderSize }}
-                    >
-                        {pages.map((page, pageIndex) => <View
-                            key={`folder-page-${pageIndex}`}
-                            style={{
-                                alignContent: "flex-start",
-                                alignItems: "center",
-                                flexDirection: "row",
-                                flexWrap: "wrap",
-                                gap: 8,
-                                height: folderHeight,
-                                paddingBottom: 28,
-                                paddingHorizontal: 10,
-                                paddingTop: 52,
-                                width: folderSize,
-                            }}
-                        >
-                            {page.map(guild => {
-                                const ids = overlayFolder.children.map(child => child.id);
-                                const offset = reorderOffset("servers", guild.id);
-                                const start = (event: unknown): boolean => beginReorder(
-                                    "servers",
-                                    guild.id,
-                                    event,
-                                    ids,
-                                    3,
-                                    DRAWER_ITEM_WIDTH + 8,
-                                    82 + 8,
-                                );
-                                const item = <DrawerItem
-                                    dragging={draggingId === `servers:${guild.id}`}
-                                    layout="grid"
-                                    nativeReorder={nativeReorderAvailable}
-                                    node={guild}
-                                    onFolder={() => undefined}
-                                    onGuild={selectedGuild => {
-                                        if (!consumeSuppressedPress("servers", selectedGuild.id)) selectGuild(selectedGuild);
-                                    }}
-                                    onLongPress={start}
-                                    onPressOut={releaseReorder}
-                                    onTouchCancel={cancelGesture}
-                                    onTouchEnd={endGesture}
-                                    onTouchMove={moveReorder}
-                                    selectedGuildId={selectedGuildId}
-                                />;
-                                return nativeReorderAvailable
-                                    ? <NativeReorderTarget
-                                        key={guild.id}
-                                        offset={offset}
-                                        onCancel={cancelReorder}
-                                        onDrop={releaseReorder}
-                                        onMove={moveReorder}
-                                        onStart={start}
-                                    >
-                                        {item}
-                                    </NativeReorderTarget>
-                                    : <View
-                                        key={guild.id}
-                                        style={offset
-                                            ? { transform: [{ translateX: offset.x }, { translateY: offset.y }] }
-                                            : undefined}
-                                    >
-                                        {item}
-                                    </View>;
-                            })}
-                        </View>)}
-                    </ScrollView>
-                    <FolderTitle key={overlayFolder.id} folder={overlayFolder}
-                        style={{ position: "absolute", top: 8, left: 20, right: 20 }} />
-                    {pages.length > 1 ? <View pointerEvents="box-none" style={{
-                        alignItems: "center",
-                        bottom: 8,
-                        flexDirection: "row",
-                        gap: 5,
-                        justifyContent: "center",
-                        position: "absolute",
-                    }}>
-                        {pages.map((_page, index) => <Pressable
-                            accessibilityLabel={`Folder page ${index + 1}`}
-                            accessibilityRole="button"
-                            accessibilityState={{ selected: index === folderPage }}
-                            key={`folder-dot-${index}`}
-                            onPress={() => {
-                                setFolderPage(index);
-                                try {
-                                    folderPager.current?.scrollTo?.({ animated: true, x: index * folderSize, y: 0 });
-                                } catch {}
-                            }}
-                            style={{
-                                backgroundColor: index === folderPage ? palette.normal : palette.muted,
-                                borderRadius: 3,
-                                height: 7,
-                                marginHorizontal: 4,
-                                marginVertical: 10,
-                                width: 7,
-                            }}
-                        />)}
-                    </View> : null}
-                </Pressable>
-            </Pressable>;
+    }
+
+    return function ServerDrawerSurface({ panel }: t.ServerDrawerSurfaceProps) {
+        const styles = useStyles();
+        const bottomInset = useInset();
+        const TEXT_MUTED: string = useToken(semanticColors.TEXT_MUTED);
+        const TEXT_DEFAULT: string = useToken(semanticColors.TEXT_DEFAULT);
+        const TEXT_BRAND: string = useToken(semanticColors.TEXT_BRAND);
+        const [ui, setUiState] = useState<t.DrawerState>({ expanded: false, view: "servers", filter: "all", query: "" });
+        const setUi = (next: Partial<t.DrawerState>) => setUiState(previous => ({ ...previous, ...next }));
+        const { expanded, view, filter, query, folderId, folderOverlayId } = ui;
+        const closeFolder = () => setUi({ folderOverlayId: undefined });
+
+        const [{ height: viewportHeight, width: viewportWidth }, setViewport] = useState<Pick<Native.LayoutRectangle, "width" | "height">>(() => Native.Dimensions.get("window"));
+
+        const scrollY = useRef(0);
+        const data = useDrawerData();
+        const { dockSpecs, drawerHeight, panelLeft, grid, columns, columnStep, previewWidth, previewTransform, columnOffset } =
+            getDrawerGeometry(viewportWidth, viewportHeight - bottomInset - useSafeAreaInsets().top, data.layout);
+
+        const drawerFolder = data.nodes.find((node): node is t.DrawerFolder => node.kind === "folder" && node.id === folderId);
+        const overlayFolder = data.nodes.find((node): node is t.DrawerFolder => node.kind === "folder" && node.id === folderOverlayId);
+        const visible = filteredItems(view === "servers" ? drawerFolder?.children ?? data.nodes : data.directMessages, filter, query);
+        const drag = useReorder(data.directMessages, previewTransform);
+        const active = drag.reorder.current;
+        const resize = useDrawerMotion(expanded, dockSpecs.dockHeight - DOCK_REST_OFFSET, drawerHeight, scrollY, drag.reorder, setDrawerOpen);
+
+        useEffect(() => {
+            if (folderId && !drawerFolder) setUi({ folderId: undefined });
+            if (folderOverlayId && !overlayFolder) setUi({ folderOverlayId: undefined });
+        }, [drawerFolder, folderId, folderOverlayId, overlayFolder]);
+
+        useEffect(() => { scrollY.current = 0; }, [filter, folderId, data.layout, query]);
+
+        // Discord owns focus, current-callback tracking and subscription cleanup.
+        useNavigatorBackPressHandler(() => {
+            if (signal.aborted || !expanded && !folderId && !folderOverlayId) return false;
+            if (folderOverlayId) closeFolder();
+            else if (folderId) setUi({ folderId: undefined });
+            else setDrawerOpen(false, false);
+
+            return true;
+        });
+
+        function setDrawerOpen(open: boolean, reset = true) {
+            controller.animateNext();
+            resize.cancel();
+            setUi({ expanded: open, ...(!open && reset ? { folderId: undefined, query: "" } : {}) });
+            if (!open && reset) scrollY.current = 0;
         }
-        const draggedId = draggingId?.slice(draggingId.indexOf(":") + 1);
-        const draggedItem = draggingId?.startsWith("servers:")
-            ? nodes.find(node => node.id === draggedId)
-                ?? guildsInTreeOrder(nodes).find(guild => guild.id === draggedId)
-            : draggingId?.startsWith("dms:")
-                ? directMessages.find(directMessage => directMessage.id === draggedId)
-                : undefined;
-        const draggedLabel = draggedItem
-            ? "kind" in draggedItem
-                ? draggedItem.kind === "guild" ? draggedItem.name : draggedItem.name ?? "Folder"
-                : draggedItem.name
-            : undefined;
-        const currentDragPoint = dragPosition.current ?? dragPoint;
-        const floatingPreview = currentDragPoint && draggedItem && draggedLabel
-            ? <FloatingView
-                accessibilityLabel={`Dragging ${draggedLabel}`}
-                accessibilityRole="summary"
-                pointerEvents="none"
-                ref={floatingPreviewHandle}
-                style={{
-                    elevation: 60,
-                    left: layout === "grid" ? 0 : panelLeft + 10,
-                    position: "absolute",
-                    top: 0,
-                    transform: previewTransform(currentDragPoint),
-                    width: previewWidth,
-                    zIndex: 100,
-                }}
-            >
-                <DragPreview item={draggedItem} layout={layout} width={previewWidth} />
-            </FloatingView>
-            : null;
-        return <View
-            onLayout={(event: unknown) => {
-                const measured = eventWidth(event);
-                if (measured !== undefined) {
-                    if (measured !== viewportWidth) setViewportWidth(measured);
-                    if (typeof properties.onWidthChange === "function") properties.onWidthChange(measured);
-                }
-                const measuredHeight = eventHeight(event);
-                if (measuredHeight !== undefined && measuredHeight !== viewportHeight) setViewportHeight(measuredHeight);
-            }}
-            pointerEvents="box-none"
-            style={{
-                bottom: 0,
-                left: 0,
-                position: "absolute",
-                right: 0,
-                top: 0,
-                zIndex: 0,
-            }}
-        >
-            {folderOverlay}
-            <View
-                accessibilityLabel={drawerVisible
-                    ? view === "servers" ? "All servers drawer" : "Direct messages drawer"
-                    : "Server dock"}
-                accessibilityViewIsModal={drawerVisible}
-                importantForAccessibility={drawerVisible ? "yes" : "auto"}
-                onTouchCancel={cancelGesture}
-                onTouchEnd={endGesture}
-                onTouchMove={moveGesture}
-                onTouchStart={beginGesture}
-                style={{
-                    backgroundColor: palette.background,
-                    borderColor: palette.border,
-                    borderTopLeftRadius: 24,
-                    borderTopRightRadius: 24,
-                    borderWidth: 1,
-                    borderBottomWidth: 0,
-                    bottom: bottomInset - YOU_BAR_JOIN_DEPTH,
-                    elevation: 0,
-                    height: currentHeight + YOU_BAR_JOIN_DEPTH,
-                    left: panelLeft,
-                    overflow: "hidden",
-                    position: "absolute",
-                    width: panelWidth,
-                    zIndex: 0,
-                }}
-            >
-                <View style={{ height: currentHeight, overflow: "hidden" }}>
-                    {handle}
+
+        const open = (operation: string, action: () => void | boolean, close = true) => {
+            try { if (action() !== false && close) setDrawerOpen(false); }
+            catch (error) { reportActionFailure(operation, error); }
+        };
+
+        const selectItem = (item: t.DrawerGuild | t.DirectMessage) => {
+            if (item.kind) closeFolder();
+            open("open this item", () => item.kind ? controller.selectGuild(item.id) : controller.selectPrivateChannel(item.id), resize.visible);
+        };
+
+        const changeView = (next: t.DrawerView, open = false): void => {
+            if (view === next && !open) return;
+            drag.finish();
+            setUi({ folderId: undefined, folderOverlayId: undefined, query: "", view: next, ...(open ? { filter: "all" } : {}) });
+            if (open) setDrawerOpen(true);
+        };
+
+        const renderItem = (item: t.DrawerItem, inFolder = false, compactSize?: number) => {
+            const render = (menu?: t.NativeMenuAnchor) => {
+                const content = <Item item={item} menu={menu} compactSize={compactSize} layout={inFolder ? "grid" : data.layout}
+                    dragging={active?.source.id === item.id}
+                    merging={!inFolder && active?.mergeSince !== undefined && active.items[active.target].id === item.id}
+                    selectedId={item.kind ? data.selectedGuildId : data.selectedPrivateChannelId}
+                    onPress={() => item.kind === "folder" ? setUi(compactSize ? { folderOverlayId: item.id } : { folderId: item.id }) : selectItem(item)} />;
+
+                return compactSize ? content : <DragTarget offset={drag.offset(item.id)} {...drag.handlers}
+                    onStart={point => drag.begin(item, point, inFolder ? overlayFolder!.children : visible,
+                        { columns: inFolder ? 3 : columns, columnStep: inFolder ? ITEM_WIDTH + 8 : columnStep,
+                            layout: inFolder ? "grid" : data.layout, rowStep: inFolder ? 90 : grid ? 82 + ITEM_GAP : 72 }, menu?.onLongPress)}>{content}</DragTarget>;
+            };
+
+            return item.kind === "guild" ? <GuildMenu key={item.id} guild={item}>{render}</GuildMenu> : <Fragment key={item.id}>{render()}</Fragment>;
+        };
+
+        const viewLabel = view === "servers" ? "servers" : "direct messages";
+
+        const [rail, content] = panel.props.children;
+
+        return signal.aborted ? panel : cloneElement(panel, { children: [<View key="rail" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" pointerEvents="none"
+            style={{ height: 1, width: 1, position: "absolute", left: -10000, opacity: 0 }}>{rail}</View>, cloneElement(content, {
+            style: [content.props.style, { bottom: dockSpecs.dockHeight - DOCK_REST_OFFSET, left: 0, right: 0, width: "100%", borderLeftWidth: 0 }],
+        }), <View key="drawer" onLayout={({ nativeEvent: { layout } }: Native.LayoutChangeEvent) => {
+            if (layout.width > 0 && layout.height > 0) setViewport(layout);
+        }} pointerEvents="box-none" style={styles.drawerBackdrop}>
+            {overlayFolder && <FolderOverlay key={overlayFolder.id} folder={overlayFolder} width={viewportWidth} height={viewportHeight - bottomInset}
+                closeFolder={closeFolder} renderItem={guild => renderItem(guild, true)} handlers={resize.handlers} />}
+            <View accessibilityLabel={resize.visible ? view === "servers" ? "All servers drawer" : "Direct messages drawer" : "Server dock"}
+                accessibilityViewIsModal={resize.visible} importantForAccessibility={resize.visible ? "yes" : "auto"} {...resize.handlers}
+                style={[styles.drawerPanel, { bottom: bottomInset - YOU_BAR_JOIN_DEPTH, height: resize.height + YOU_BAR_JOIN_DEPTH, left: panelLeft, width: dockSpecs.dockWidth }]}>
+                <View style={{ height: resize.height, overflow: "hidden" }}>
+                    <Pressable accessibilityRole="button" accessibilityState={{ expanded: resize.visible }}
+                        accessibilityActions={[{ label: resize.visible ? "Collapse" : "Expand", name: "activate" }]} accessibilityLabel={resize.visible ? "Collapse server drawer" : "Expand server drawer"}
+                        hitSlop={{ bottom: 14, left: 14, right: 14, top: 14 }}
+                        onAccessibilityAction={() => setDrawerOpen(!resize.visible)} onPress={() => setDrawerOpen(!resize.visible)} style={styles.handle}>
+                        <View style={styles.handleBar} />
+                    </Pressable>
                     <View pointerEvents={expanded ? "none" : "auto"}
-                        accessibilityElementsHidden={drawerVisible} importantForAccessibility={drawerVisible ? "no-hide-descendants" : "auto"}
-                        style={{ position: "absolute", top: 16, left: 0, right: 0, height: dockSpecs.dockHeight - 16,
-                            backgroundColor: palette.background, backfaceVisibility: "hidden", zIndex: 2,
-                            opacity: roll < 1 ? 1 : 0, transformOrigin: "center top", transform: [{ perspective: 900 }, { rotateX: `${-90 * roll}deg` }] }}>
-                        {compactContent}
+                        accessibilityElementsHidden={resize.visible} importantForAccessibility={resize.visible ? "no-hide-descendants" : "auto"} style={[styles.compactFace, resize.compactStyle]}>
+                        <View style={[styles.dockRow, { height: dockSpecs.itemSize }]}>
+                            {Array.from({ length: dockSpecs.itemCountNoExtras }, (_, index) => {
+                                const node = data.nodes[index];
+                                if (!node || node.kind === "folder" && !node.children.length) return <View key={`spacer-${index}`}
+                                    accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{ height: dockSpecs.itemSize, opacity: 0, width: dockSpecs.itemSize }} />;
+
+                                return renderItem(node, false, dockSpecs.itemSize);
+                            })}
+                            <View style={[styles.dockDivider, { height: Math.round(dockSpecs.itemSize * 0.7) }]} />
+                            <Pressable accessibilityRole="button" accessibilityLabel="Direct Messages" onPress={() => changeView("dms", true)}
+                                style={[styles.dmButton, { height: dockSpecs.itemSize, width: dockSpecs.itemSize }]}>
+                                <Icon name="ChatIcon" color={TEXT_DEFAULT} />
+                            </Pressable>
+                            <Icon label="View all servers" onPress={() => setDrawerOpen(true)} name="GridSquareIcon" color={TEXT_DEFAULT}
+                                buttonSize={dockSpecs.itemSize} size={Math.max(10, Math.floor((dockSpecs.itemSize * 0.8 - 5) / 2)) * 2 + 5} />
+                        </View>
                     </View>
                     <View pointerEvents={expanded ? "auto" : "none"}
-                        accessibilityElementsHidden={!drawerVisible} importantForAccessibility={drawerVisible ? "auto" : "no-hide-descendants"}
-                        style={{ position: "absolute", top: 16 + rollSeam, left: 0, right: 0, height: roll < 1 ? compactFaceHeight : drawerHeight - 16,
-                            backgroundColor: palette.background, backfaceVisibility: "hidden", zIndex: 1,
-                            opacity: roll > 0 ? 1 : 0, transformOrigin: "center top", transform: [{ perspective: 900 }, { rotateX: `${90 * (1 - roll)}deg` }] }}>
-                        <View style={{ height: drawerHeight - 16 }}>{drawerContent}</View>
+                        accessibilityElementsHidden={!resize.visible} importantForAccessibility={resize.visible ? "auto" : "no-hide-descendants"} style={[styles.expandedFace, resize.expandedStyle]}>
+                        <View style={{ height: drawerHeight - 16 }}>
+                            <View style={styles.header}>
+                                {drawerFolder ? <Fragment>
+                                    <Icon label="Back to all servers" onPress={() => setUi({ folderId: undefined })} name="ArrowSmallLeftIcon" color={TEXT_DEFAULT} size={30} />
+                                    <FolderTitle key={drawerFolder.id} folder={drawerFolder} style={{ flex: 1, paddingVertical: 8 }} />
+                                </Fragment> : <Tabs options={[["servers", "Servers"], ["dms", "Direct Messages"]]} value={view} onChange={changeView} />}
+                                <Icon label={`Switch to ${grid ? "list" : "grid"} view`} onPress={() => preferences.set({ layout: grid ? "list" : "grid" })}
+                                    name={grid ? "ListViewIcon" : "GridSquareIcon"} color={TEXT_MUTED} />
+                                <Icon label={view === "servers" ? "Create a server" : "Start a direct message"}
+                                    onPress={() => open("open creation", view === "servers" ? controller.openCreateGuild : controller.openCreateDm)} name="PlusLargeIcon" color={TEXT_MUTED} />
+                            </View>
+                            <View style={styles.searchRow}>
+                                <TextInput accessibilityLabel={`Search ${viewLabel}`} placeholder={`Search ${viewLabel}`} placeholderTextColor={TEXT_MUTED}
+                                    value={query} onChangeText={value => setUi({ query: value })} returnKeyType="search" style={styles.searchInput} />
+                                <Tabs<"all" | "unread"> filter value={filter} onChange={value => setUi({ filter: value })}
+                                    options={[["all", "All", `All ${viewLabel}`], ["unread", "Unreads", `Unread ${viewLabel}`]]} />
+                            </View>
+                            <FlashList data={visible} numColumns={columns} ListEmptyComponent={<View style={styles.emptyContainer}>
+                                <Text style={styles.emptyText}>{query.trim() ? `No ${viewLabel} match your search`
+                                    : filter === "unread" ? "You're all caught up" : `No ${viewLabel} to show`}</Text>
+                            </View>}
+                            contentContainerStyle={{ paddingBottom: 40, paddingHorizontal: grid ? SIDE_PADDING : 10, paddingTop: grid ? 14 : 10 }}
+                            key={`${view}-${data.layout}-${columns}-${folderId ?? "root"}`} maintainVisibleContentPosition={{ disabled: true }}
+                            getItemType={(item: t.DrawerItem) => item.kind ?? "dm"} keyExtractor={(item: t.DrawerItem) => `${view}:${item.id}`}
+                            onScroll={(event: Native.NativeSyntheticEvent<Native.NativeScrollEvent>) => { scrollY.current = Math.max(0, event.nativeEvent.contentOffset.y); }}
+                            renderItem={({ item, index }: Pick<Native.ListRenderItemInfo<t.DrawerItem>, "item" | "index">) => <View style={{
+                                marginLeft: index % columns * columnOffset, width: grid ? ITEM_WIDTH : "100%",
+                                paddingBottom: Math.floor(index / columns) < Math.floor((visible.length - 1) / columns) ? grid ? ITEM_GAP : 4 : 0,
+                            }}>{renderItem(item)}</View>}
+                            scrollEventThrottle={16} scrollEnabled={!active} showsVerticalScrollIndicator={false} style={{ flex: 1 }} />
+                        </View>
                     </View>
                 </View>
             </View>
-            {floatingPreview}
-            {draggingId?.startsWith("servers:") && reorder.current?.sourceFolderId && (drawerFolder || overlayFolder)
-                ? renderExitTarget() : null}
-        </View>;
+            {active ? <View accessibilityLabel={`Dragging ${active.source.name ?? "Folder"}`} accessibilityRole="summary" pointerEvents="none" ref={drag.previewRef}
+                style={[styles.dragPreview, { left: grid ? 0 : panelLeft + 10, transform: previewTransform(active.point), width: previewWidth }]}>
+                <Item item={active.source} layout={data.layout} previewWidth={previewWidth} />
+            </View> : null}
+            {active?.source.kind === "guild" && active.source.folderId && (drawerFolder || overlayFolder) && <View ref={drag.exitTarget} collapsable={false} onLayout={drag.measureExit} pointerEvents="none"
+                accessible accessibilityRole="image" accessibilityLabel="Move server out of folder"
+                accessibilityHint="Drag a server onto this arrow and release to make it standalone" style={[styles.exitTarget, { left: viewportWidth / 2 - 28, bottom: bottomInset + 24 }]}>
+                <View style={{ height: 42, justifyContent: "center", transform: [{ scale: active?.outside ? 1.15 : 1 }] }}>
+                    <Icon name="UndoIcon" color={active?.outside ? TEXT_BRAND : TEXT_DEFAULT} size={36} />
+                </View>
+            </View>}
+        </View>] });
     };
+}
+
+export function hitsDropTarget(point: t.DragPoint, bounds: Native.LayoutRectangle | undefined): boolean {
+    if (!bounds || ![point.x, point.y, bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isFinite)
+        || bounds.width <= 0 || bounds.height <= 0) return false;
+
+    return point.x >= bounds.x - 8 && point.x <= bounds.x + bounds.width + 8
+        && point.y >= bounds.y - 8 && point.y <= bounds.y + bounds.height + 8;
 }
