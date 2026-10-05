@@ -3,8 +3,8 @@
     "private": true,
     "type": "module",
     "scripts": {
-        "build": "node scripts/build.mjs",
-        "build:dev": "node scripts/build.mjs --dev",
+        "build": "revenge-plugin build",
+        "build:dev": "revenge-plugin build --dev",
         "generate-index": "revenge-plugin generate-index",
         "plan-releases": "revenge-plugin plan-releases",
         "serve": "revenge-plugin serve",
@@ -20,15 +20,12 @@
         "@revenge-mod/types": "git+https://github.com/revenge-mod/revenge-types.git#565026d875a34d0567b26ab6f4e3e2e3938e85ad"
     },
     "devDependencies": {
-        "@babel/core": "7.29.7",
         "@biomejs/biome": "^2.5.12",
-        "@swc/core": "1.16.2",
         "@types/node": "^26.4.1",
         "@types/react": "^19.2.18",
-        "fflate": "^0.8.3",
-        "rain-worklet-compiler": "npm:react-native-reanimated@3.19.4",
         "react-native": "0.81.6",
-        "typescript": "^7.0.2"
+        "typescript": "^7.0.2",
+        "fflate": "^0.8.3"
     },
     "overrides": {
         "@react-native/community-cli-plugin": "npm:dry-uninstall",

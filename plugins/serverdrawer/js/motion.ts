@@ -34,24 +34,19 @@ export function createDrawerMotion(Gesture: t.NativeGestureModule["Gesture"]) {
         }
     };
 
-    function useDrawerMotion(expanded: boolean, minimum: number, maximum: number, listAtTop: boolean,
-        dragging: boolean, onOpen: (open: boolean) => void) {
-        const distance = maximum - minimum;
-        const [translate] = useState(() => new Animated.Value(expanded ? 0 : distance));
-        const position = useRef(expanded ? 0 : distance);
-        const target = useRef(position.current);
-        const origin = useRef(0);
-        const callbacks = useRef({ onOpen });
-        callbacks.current = { onOpen };
+    const spring = (value: Animated.Value, next: number, velocity = 0) => {
+        value.stopAnimation();
+        if (accessibility.useReducedMotion) value.setValue(next);
+        else Animated.spring(value, { ...subtleSpring, velocity, toValue: next, useNativeDriver: true }).start();
+    };
 
-        const settle = (open: boolean, velocity = 0) => {
-            target.current = open ? 0 : distance;
-            translate.stopAnimation();
-            if (accessibility.useReducedMotion) {
-                translate.setValue(target.current);
-            } else {
-                Animated.spring(translate, { ...subtleSpring, velocity, toValue: target.current, useNativeDriver: true }).start();
-            }
+    function useTranslation(next: number) {
+        const [translate] = useState(() => new Animated.Value(next));
+        const position = useRef(next);
+        const target = useRef(next);
+        const settle = (value: number, velocity = 0) => {
+            target.current = value;
+            spring(translate, value, velocity);
         };
 
         useEffect(() => {
@@ -61,8 +56,19 @@ export function createDrawerMotion(Gesture: t.NativeGestureModule["Gesture"]) {
         }, [translate]);
 
         useEffect(() => {
-            if (target.current !== (expanded ? 0 : distance)) settle(expanded);
-        }, [expanded, distance]);
+            if (target.current !== next) settle(next);
+        }, [next]);
+
+        return { translate, position, target, settle };
+    }
+
+    function useDrawerMotion(expanded: boolean, minimum: number, maximum: number, listAtTop: boolean,
+        dragging: boolean, onOpen: (open: boolean) => void) {
+        const distance = maximum - minimum;
+        const { translate, position, target, settle } = useTranslation(expanded ? 0 : distance);
+        const origin = useRef(0);
+        const callback = useRef(onOpen);
+        callback.current = onOpen;
 
         const gestures = useMemo(() => {
             const configure = () => {
@@ -86,11 +92,11 @@ export function createDrawerMotion(Gesture: t.NativeGestureModule["Gesture"]) {
                         if (!success) return;
                         const fling = Math.abs(event.velocityY) > config.minFlingVelocityX;
                         const open = fling ? event.velocityY < 0 : position.current < distance / 2;
-                        settle(open, event.velocityY);
-                        callbacks.current.onOpen(open);
+                        settle(open ? 0 : distance, event.velocityY);
+                        callback.current(open);
                     })
                     .onFinalize((_event, success) => {
-                        if (active && !success) settle(target.current === 0);
+                        if (active && !success) settle(target.current);
                         active = false;
                     });
             };
@@ -103,22 +109,63 @@ export function createDrawerMotion(Gesture: t.NativeGestureModule["Gesture"]) {
             expandedStyle: { opacity: translate.interpolate({ inputRange: [0, distance], outputRange: [1, 0], extrapolate: "clamp" }) } };
     }
 
+    function usePageMotion(view: t.DrawerView, width: number, enabled: boolean, onView: (view: t.DrawerView) => void) {
+        const { translate, position, settle } = useTranslation(view === "servers" ? 0 : -width);
+        const callback = useRef(onView);
+        callback.current = onView;
+
+        const gesture = useMemo(() => {
+            let active = false;
+            let origin = 0;
+            const finish = (next: number, velocity = 0) => {
+                settle(next, velocity);
+                callback.current(next === 0 ? "servers" : "dms");
+            };
+            const slop = config.touchSlopForPanGesture;
+
+            return Gesture.Pan().runOnJS(true).shouldCancelWhenOutside(false).enabled(enabled)
+                .activeOffsetX([-slop, slop]).failOffsetY([-slop, slop])
+                .onStart(event => {
+                    active = true;
+                    translate.stopAnimation();
+                    origin = Math.max(-width, Math.min(0, position.current)) - event.translationX;
+                })
+                .onUpdate(event => {
+                    position.current = Math.max(-width, Math.min(0, origin + event.translationX));
+                    translate.setValue(position.current);
+                })
+                .onEnd((event, success) => {
+                    if (!success) return;
+                    const dms = Math.abs(event.velocityX) > config.minFlingVelocityX ? event.velocityX < 0 : position.current <= -width / 2;
+                    finish(dms ? -width : 0, event.velocityX);
+                })
+                .onFinalize((_event, success) => {
+                    if (active && !success) finish(position.current <= -width / 2 ? -width : 0);
+                    active = false;
+                });
+        }, [enabled, width]);
+
+        return { gesture, style: { transform: [{ translateX: translate }] } };
+    }
+
     function useFolderPageMotion(folderId: string | undefined) {
-        const [progress] = useState(() => new Animated.Value(1));
+        const [progress] = useState(() => new Animated.Value(folderId ? 1 : 0));
         const previous = useRef(folderId);
 
         useEffect(() => {
             if (previous.current === folderId) return;
             previous.current = folderId;
-            progress.setValue(0);
-            animate(progress, 1, !!folderId);
+            spring(progress, folderId ? 1 : 0);
 
             return () => progress.stopAnimation();
         }, [folderId]);
 
-        return { opacity: progress, transform: [{ translateY: progress.interpolate({
-            inputRange: [0, 1], outputRange: [folderId ? 24 : -24, 0], extrapolate: "clamp"
-        }) }] };
+        const interpolate = (outputRange: number[]) => progress.interpolate({ inputRange: [0, 1], outputRange, extrapolate: "clamp" });
+
+        return {
+            rootStyle: { opacity: interpolate([1, 0]), transform: [{ translateY: interpolate([0, -24]) }] },
+            folderStyle: { opacity: interpolate([0, 1]), transform: [{ translateY: interpolate([24, 0]) }] }
+        };
     }
 
     function useFolderOverlayMotion(folderId: string | undefined) {
@@ -142,5 +189,5 @@ export function createDrawerMotion(Gesture: t.NativeGestureModule["Gesture"]) {
     }
 
     return { AnimatedView: Animated.View, AnimatedPressable: Animated.createAnimatedComponent(Pressable),
-        useDrawerMotion, useFolderPageMotion, useFolderOverlayMotion };
+        useDrawerMotion, usePageMotion, useFolderPageMotion, useFolderOverlayMotion };
 }

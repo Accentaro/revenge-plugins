@@ -30,7 +30,7 @@ npm run package
 
 Plugin sources live in `plugins/<name>/js/` with a Next manifest alongside them. ZIPs are written to `build/dist/<id>@<version>.zip`.
 
-Use `npm run build` or `npm run package` to compile ServerDrawer's worklets for Discord's bundled Reanimated 3.19.4. The compiler is a development dependency; no Reanimated runtime is packaged.
+Use `npm run build` or `npm run package` to build ServerDrawer with the official plugin CLI. Gestures and animations use Discord's existing React Native runtime.
 
 Bump the manifest version and push to `main` to release. GitHub Actions validates and publishes immutable ZIPs and the Next index to `gh-pages`, then deploys that repository to Pages. Next verifies artifact SHA-256 hashes.
 

@@ -69,7 +69,7 @@ export interface GuildMenuProps { guild: DrawerNode; children(props: NativeMenuA
 
 export interface DragTargetProps {
     readonly children: ReactNode; readonly offset?: DragPoint;
-    readonly preview: Record<"x" | "y" | "scale", import("rain-worklet-compiler").SharedValue<number>>;
+    readonly preview: Record<"x" | "y" | "scale", Animated.Value>;
     onCancel(): void; onDrop(point: DragPoint): void; onMove(point: DragPoint): void; onStart(point: DragPoint): void;
 }
 
@@ -95,7 +95,7 @@ export interface IconProps { name: string; color: string; size?: number; label?:
 
 export interface ReorderGeometry { columns: number; columnStep: number; layout: DrawerLayout; rowStep: number }
 
-export interface DrawerState { expanded: boolean; view: DrawerView; filter: "all" | "unread"; query: string; folderId?: string; folderOverlayId?: string; }
+export interface DrawerState { expanded: boolean; view: DrawerView; filter: "all" | "unread"; query: string; folderId?: string; retainedFolderId?: string; folderOverlayId?: string; }
 
 export interface NativePanEvent { absoluteX: number; absoluteY: number; translationX: number; velocityX: number; translationY: number; velocityY: number }
 
@@ -106,9 +106,6 @@ export interface FolderOverlayProps {
     renderItem(guild: DrawerGuild): ReactNode; gesture: NativePanGesture; closing: boolean;
     backdropStyle: Animated.WithAnimatedObject<ViewStyle>; panelStyle: Animated.WithAnimatedObject<ViewStyle>;
 }
-
-export type NativeAnimations = Pick<typeof import("rain-worklet-compiler"),
-    "default" | "useSharedValue" | "useAnimatedStyle" | "withTiming" | "withSpring" | "runOnJS" | "cancelAnimation">;
 
 export interface MotionSpring { mass: number; stiffness: number; damping: number }
 
@@ -143,9 +140,9 @@ export interface NativeStores {
     SortedGuildStore: { getGuildFolders(): NativeGuildFolder[]; getGuildFolderById(id: number): NativeGuildFolder | undefined };
 }
 
-export interface NativeExports extends NativeGestureModule, NativeAnimations, DiscordPanelsConfig {
+export interface NativeExports extends NativeGestureModule, DiscordPanelsConfig {
     SUBTLE_SPRING: MotionSpring; springStandard: unknown;
-    timingStandard: Parameters<NativeAnimations["withTiming"]>[1]; timingFast: unknown;
+    timingStandard: { duration: number }; timingFast: unknown;
     getGuildFolderMenuItems(id: string | number): MenuItem[];
     getChatLayout(): { isChatBesideChannelList: boolean };
     createStyles<T extends import("react-native").StyleSheet.NamedStyles<T>>(styles: T): () => T;
@@ -166,4 +163,11 @@ export interface NativeExports extends NativeGestureModule, NativeAnimations, Di
     getRootNavigationRef(): { current?: { navigate(route: string, params: object): void } };
     useSafeAreaInsets(): { top: number }; useNavigatorBackPressHandler(handler: () => boolean): void;
     useYouBarTotalHeight(): number; DM_WIDTH: number;
+}
+
+export interface DrawerCellProps {
+    item: DrawerItem; inFolder: boolean; compactSize?: number; page: DrawerView; items: readonly DrawerItem[];
+    animate: boolean; expanded: boolean; layout: DrawerLayout; width: number; selected: boolean;
+    dragging: boolean; merging: boolean; offsetX?: number; offsetY?: number;
+    render: import("react").RefObject<(props: DrawerCellProps) => ReactNode>;
 }

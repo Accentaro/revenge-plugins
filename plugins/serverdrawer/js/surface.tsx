@@ -1,4 +1,4 @@
-import { cloneElement, Fragment, memo, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { cloneElement, Fragment, memo, startTransition, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import * as Native from "react-native";
 import { getAssetIdByName as findAssetId } from "@revenge-mod/assets";
 import { Stores } from "@revenge-mod/discord/flux";
@@ -8,7 +8,7 @@ import { findByName, findByProps, preferences, reportActionFailure } from "./ind
 import type * as t from "./types";
 
 import { createDrawerMotion } from "./motion";
-import { createDragMotion } from "./drag.worklet";
+import { createDragMotion } from "./drag";
 
 export const FLOATING_YOU_BAR = Native.Platform.OS === "ios";
 
@@ -351,10 +351,12 @@ export function createServerDrawerSurface(signal: AbortSignal, useInset: () => n
     const { useSafeAreaInsets } = findByProps("useSafeAreaInsets");
     const { useNavigatorBackPressHandler } = findByProps("useNavigatorBackPressHandler");
     const { Gesture, GestureDetector }: t.NativeGestureModule = findByProps("Gesture", "GestureDetector");
-    const { AnimatedView, AnimatedPressable, useDrawerMotion, useFolderPageMotion, useFolderOverlayMotion } = createDrawerMotion(Gesture);
+    const { AnimatedView, AnimatedPressable, useDrawerMotion, usePageMotion, useFolderPageMotion, useFolderOverlayMotion } = createDrawerMotion(Gesture);
     const { Image, Pressable, ScrollView, Text, View, TextInput } = Native;
 
-    const { DragTarget, DragPreview, PageView, usePreview, usePageMotion } = createDragMotion({ Gesture, GestureDetector }, LONG_PRESS_MS);
+    const { DragTarget, usePreview } = createDragMotion({ Gesture, GestureDetector }, LONG_PRESS_MS);
+
+    const DrawerCell = memo((props: t.DrawerCellProps) => props.render.current(props));
 
     function Badge({ state, compact }: t.BadgeProps) {
         const styles = useStyles();
@@ -646,6 +648,7 @@ export function createServerDrawerSurface(signal: AbortSignal, useInset: () => n
         const setUi = (next: Partial<t.DrawerState>) => setUiState(previous => ({ ...previous, ...next }));
         const { expanded, view, filter, query, folderId, folderOverlayId } = ui;
         const closeFolder = () => setUi({ folderOverlayId: undefined });
+        const changeFolder = (folderId?: string) => startTransition(() => setUi({ folderId, ...(folderId ? { retainedFolderId: folderId } : {}) }));
 
         const [{ height: viewportHeight, width: viewportWidth }, setViewport] = useState<Pick<Native.LayoutRectangle, "width" | "height">>(() => Native.Dimensions.get("window"));
 
@@ -665,6 +668,7 @@ export function createServerDrawerSurface(signal: AbortSignal, useInset: () => n
         const folderMotion = useFolderOverlayMotion(folderOverlayId);
         const folderPageStyle = useFolderPageMotion(folderId);
         const drawerFolder = data.nodes.find((node): node is t.DrawerFolder => node.kind === "folder" && node.id === folderId);
+        const retainedFolder = data.nodes.find((node): node is t.DrawerFolder => node.kind === "folder" && node.id === ui.retainedFolderId);
         const overlayFolder = data.nodes.find((node): node is t.DrawerFolder => node.kind === "folder" && node.id === folderMotion.folderId);
         const visible = filteredItems(view === "servers" ? drawerFolder?.children ?? data.nodes : data.directMessages, filter, query);
         const drag = useReorder(data.directMessages);
@@ -683,7 +687,7 @@ export function createServerDrawerSurface(signal: AbortSignal, useInset: () => n
         useNavigatorBackPressHandler(() => {
             if (signal.aborted || !expanded && !folderId && !folderOverlayId) return false;
             if (folderOverlayId) closeFolder();
-            else if (folderId) setUi({ folderId: undefined });
+            else if (folderId) changeFolder();
             else setDrawerOpen(false, false);
 
             return true;
@@ -711,14 +715,18 @@ export function createServerDrawerSurface(signal: AbortSignal, useInset: () => n
             if (open) setDrawerOpen(true);
         }
 
-        const renderItem = (item: t.DrawerItem, inFolder = false, compactSize?: number, page: t.DrawerView = view, items = visible) => {
+        const renderCell = ({ item, inFolder, compactSize, items, animate }: t.DrawerCellProps) => {
             const render = (menu?: t.NativeMenuAnchor) => {
-                const content = <Item item={item} menu={menu} animate={!compactSize && (expanded && page === view || !!folderOverlayId) && foreground}
+                const content = <Item item={item} menu={menu} animate={animate}
                     compactSize={compactSize} layout={inFolder ? "grid" : data.layout}
                     dragging={active?.source.id === item.id}
                     merging={!inFolder && active?.mergeReady === true && active.items[active.target].id === item.id}
                     selectedId={item.kind ? data.selectedGuildId : data.selectedPrivateChannelId}
-                    onPress={() => item.kind === "folder" ? setUi(compactSize ? { folderOverlayId: item.id } : { folderId: item.id }) : selectItem(item)} />;
+                    onPress={() => {
+                        if (item.kind !== "folder") return selectItem(item);
+                        if (compactSize) setUi({ folderOverlayId: item.id });
+                        else changeFolder(item.id);
+                    }} />;
 
                 return compactSize ? content : <DragTarget preview={preview} offset={drag.offset(item.id)} {...drag.handlers}
                     onStart={point => drag.begin(item, point, inFolder ? overlayFolder!.children : items,
@@ -727,11 +735,74 @@ export function createServerDrawerSurface(signal: AbortSignal, useInset: () => n
             };
 
             const Menu = item.kind === "folder" ? FolderMenu : GuildMenu;
-            return item.kind ? <Menu key={item.id} guild={item}>{render}</Menu> : <Fragment key={item.id}>{render()}</Fragment>;
+            const key = compactSize || inFolder ? item.id : undefined;
+            return item.kind ? <Menu key={key} guild={item}>{render}</Menu> : <Fragment key={key}>{render()}</Fragment>;
+        };
+
+        const cellRenderer = useRef(renderCell);
+        cellRenderer.current = renderCell;
+        const renderItem = (item: t.DrawerItem, inFolder = false, compactSize?: number, page: t.DrawerView = view, items = visible, visiblePage = true) => {
+            const offset = drag.offset(item.id);
+            const animated = item.kind !== "folder" && !!item.animatedAvatarUri && item.animatedAvatarUri !== item.avatarUri;
+
+            return <DrawerCell key={compactSize || inFolder ? item.id : undefined} render={cellRenderer}
+                item={item} inFolder={inFolder} compactSize={compactSize} page={page} items={items}
+                animate={animated && visiblePage && !compactSize && (expanded && page === view || !!folderOverlayId) && foreground}
+                expanded={expanded} layout={data.layout} width={viewportWidth}
+                selected={item.id === (item.kind ? data.selectedGuildId : data.selectedPrivateChannelId)}
+                dragging={active?.source.id === item.id} merging={!inFolder && active?.mergeReady === true && active.items[active.target].id === item.id}
+                offsetX={offset?.x} offsetY={offset?.y} />;
         };
 
         const pageWidth = dockSpecs.dockWidth;
         const pages = usePageMotion(view, pageWidth, expanded && !active && !folderOverlayId, changeView);
+
+        const renderPage = (page: t.DrawerView) => {
+            const servers = page === "servers";
+            const viewLabel = servers ? "servers" : "direct messages";
+            const folders = servers && retainedFolder ? [undefined, retainedFolder] : [undefined];
+
+            return <AnimatedView key={page} style={{ width: pageWidth, height: "100%" }}
+                accessibilityElementsHidden={page !== view} importantForAccessibility={page === view ? "auto" : "no-hide-descendants"}>
+                <View style={styles.searchRow}>
+                    <TextInput accessibilityLabel={`Search ${viewLabel}`} placeholder={`Search ${viewLabel}`} placeholderTextColor={TEXT_MUTED}
+                        value={query} onChangeText={value => setUi({ query: value })} returnKeyType="search" style={styles.searchInput} />
+                    <Tabs<"all" | "unread"> filter value={filter} onChange={value => setUi({ filter: value })}
+                        options={[["all", "All", `All ${viewLabel}`], ["unread", "Unreads", `Unread ${viewLabel}`]]} />
+                </View>
+                <View style={{ flex: 1 }}>
+                    {folders.map(folder => {
+                        const hidden = folder ? folder.id !== folderId : servers && !!drawerFolder;
+                        const items = filteredItems(servers ? folder?.children ?? data.nodes : data.directMessages,
+                            filter, page === view ? query : "");
+
+                        const motion = servers ? folderPageStyle[folder ? "folderStyle" : "rootStyle"] : undefined;
+
+                        return <AnimatedView key={folder?.id ?? "root"} pointerEvents={hidden ? "none" : "auto"}
+                            accessibilityElementsHidden={hidden} importantForAccessibility={hidden ? "no-hide-descendants" : "auto"}
+                            style={[Native.StyleSheet.absoluteFill, motion]}>
+                            <FlashList data={items} numColumns={columns} ListEmptyComponent={<View style={styles.emptyContainer}>
+                                <Text style={styles.emptyText}>{query.trim() ? `No ${viewLabel} match your search`
+                                    : filter === "unread" ? "You're all caught up" : `No ${viewLabel} to show`}</Text>
+                            </View>}
+                            contentContainerStyle={{ paddingBottom: 40, paddingHorizontal: grid ? SIDE_PADDING : 10, paddingTop: grid ? 14 : 10 }}
+                            key={`${page}-${data.layout}-${columns}`} maintainVisibleContentPosition={{ disabled: true }}
+                            getItemType={(item: t.DrawerItem) => item.kind ?? "dm"} keyExtractor={(item: t.DrawerItem) => `${page}:${item.id}`}
+                            onScroll={({ nativeEvent: { contentOffset } }: Native.NativeSyntheticEvent<Native.NativeScrollEvent>) => {
+                                if (hidden || page !== view) return;
+                                const atTop = contentOffset.y <= 0;
+                                setListAtTop(previous => previous === atTop ? previous : atTop);
+                            }}
+                            renderItem={({ item, index }: Pick<Native.ListRenderItemInfo<t.DrawerItem>, "item" | "index">) => <View style={{
+                                marginLeft: index % columns * columnOffset, width: grid ? ITEM_WIDTH : "100%",
+                                paddingBottom: Math.floor(index / columns) < Math.floor((items.length - 1) / columns) ? grid ? ITEM_GAP : 4 : 0,
+                            }}>{renderItem(item, false, undefined, page, items, !hidden)}</View>}
+                            scrollEventThrottle={16} scrollEnabled={!active} showsVerticalScrollIndicator={false} style={{ flex: 1 }} />
+                        </AnimatedView>;
+                    })}
+                </View>
+            </AnimatedView>;
+        };
 
         return signal.aborted ? null : <View onLayout={({ nativeEvent: { layout } }: Native.LayoutChangeEvent) => {
             if (layout.width > 0 && layout.height > 0) setViewport(layout);
@@ -778,10 +849,10 @@ export function createServerDrawerSurface(signal: AbortSignal, useInset: () => n
                         {/* Keep the static list ready so opening does not mount it during the gesture. */}
                         <AnimatedView pointerEvents={expanded ? "auto" : "none"}
                             accessibilityElementsHidden={!expanded} importantForAccessibility={expanded ? "auto" : "no-hide-descendants"} style={[styles.expandedFace, resize.expandedStyle]}>
-                            <AnimatedView style={[{ height: drawerHeight - 16 }, folderPageStyle]}>
+                            <View style={{ height: drawerHeight - 16 }}>
                                 <View style={styles.header}>
                                     {drawerFolder ? <Fragment>
-                                        <Icon label="Back to all servers" onPress={() => setUi({ folderId: undefined })} name="ArrowSmallLeftIcon" color={TEXT_DEFAULT} size={30} />
+                                        <Icon label="Back to all servers" onPress={() => changeFolder()} name="ArrowSmallLeftIcon" color={TEXT_DEFAULT} size={30} />
                                         <FolderTitle key={drawerFolder.id} folder={drawerFolder} style={{ flex: 1, paddingVertical: 8 }} />
                                     </Fragment> : <Tabs options={[["servers", "Servers"], ["dms", "Direct Messages"]]} value={view} onChange={changeView} />}
                                     <Icon label={`Switch to ${grid ? "list" : "grid"} view`} onPress={() => preferences.set({ layout: grid ? "list" : "grid" })}
@@ -790,50 +861,20 @@ export function createServerDrawerSurface(signal: AbortSignal, useInset: () => n
                                         onPress={() => open("open creation", view === "servers" ? controller.openCreateGuild : controller.openCreateDm)} name="PlusLargeIcon" color={TEXT_MUTED} />
                                 </View>
                                 <GestureDetector gesture={pages.gesture}><View collapsable={false} style={{ flex: 1, overflow: "hidden" }}>
-                                    <PageView style={[{ width: pageWidth * 2, height: "100%", flexDirection: "row" }, pages.style]}>
-                                        {(["servers", "dms"] as const).map(page => {
-                                            const viewLabel = page === "servers" ? "servers" : "direct messages";
-                                            const items = filteredItems(page === "servers" ? drawerFolder?.children ?? data.nodes : data.directMessages,
-                                                filter, page === view ? query : "");
-
-                                            return <View key={page} style={{ width: pageWidth, height: "100%" }}
-                                                accessibilityElementsHidden={page !== view} importantForAccessibility={page === view ? "auto" : "no-hide-descendants"}>
-                                                <View style={styles.searchRow}>
-                                                    <TextInput accessibilityLabel={`Search ${viewLabel}`} placeholder={`Search ${viewLabel}`} placeholderTextColor={TEXT_MUTED}
-                                                        value={query} onChangeText={value => setUi({ query: value })} returnKeyType="search" style={styles.searchInput} />
-                                                    <Tabs<"all" | "unread"> filter value={filter} onChange={value => setUi({ filter: value })}
-                                                        options={[["all", "All", `All ${viewLabel}`], ["unread", "Unreads", `Unread ${viewLabel}`]]} />
-                                                </View>
-                                                <FlashList data={items} numColumns={columns} ListEmptyComponent={<View style={styles.emptyContainer}>
-                                                    <Text style={styles.emptyText}>{query.trim() ? `No ${viewLabel} match your search`
-                                                        : filter === "unread" ? "You're all caught up" : `No ${viewLabel} to show`}</Text>
-                                                </View>}
-                                                contentContainerStyle={{ paddingBottom: 40, paddingHorizontal: grid ? SIDE_PADDING : 10, paddingTop: grid ? 14 : 10 }}
-                                                key={`${page}-${data.layout}-${columns}-${page === "servers" ? folderId ?? "root" : "root"}`} maintainVisibleContentPosition={{ disabled: true }}
-                                                getItemType={(item: t.DrawerItem) => item.kind ?? "dm"} keyExtractor={(item: t.DrawerItem) => `${page}:${item.id}`}
-                                                onScroll={({ nativeEvent: { contentOffset } }: Native.NativeSyntheticEvent<Native.NativeScrollEvent>) => {
-                                                    if (page !== view) return;
-                                                    const atTop = contentOffset.y <= 0;
-                                                    setListAtTop(previous => previous === atTop ? previous : atTop);
-                                                }}
-                                                renderItem={({ item, index }: Pick<Native.ListRenderItemInfo<t.DrawerItem>, "item" | "index">) => <View style={{
-                                                    marginLeft: index % columns * columnOffset, width: grid ? ITEM_WIDTH : "100%",
-                                                    paddingBottom: Math.floor(index / columns) < Math.floor((items.length - 1) / columns) ? grid ? ITEM_GAP : 4 : 0,
-                                                }}>{renderItem(item, false, undefined, page, items)}</View>}
-                                                scrollEventThrottle={16} scrollEnabled={!active} showsVerticalScrollIndicator={false} style={{ flex: 1 }} />
-                                            </View>;
-                                        })}
-                                    </PageView>
+                                    <AnimatedView style={[{ width: pageWidth * 2, height: "100%", flexDirection: "row" }, pages.style]}>
+                                        {renderPage("servers")}
+                                        {renderPage("dms")}
+                                    </AnimatedView>
                                 </View></GestureDetector>
-                            </AnimatedView>
+                            </View>
                         </AnimatedView>
                     </View>
                 </AnimatedView></GestureDetector>
             </View>
-            {active ? <DragPreview accessibilityLabel={`Dragging ${active.source.name ?? "Folder"}`} accessibilityRole="summary" pointerEvents="none"
+            {active ? <AnimatedView accessibilityLabel={`Dragging ${active.source.name ?? "Folder"}`} accessibilityRole="summary" pointerEvents="none"
                 style={[styles.dragPreview, { left: grid ? 0 : panelLeft + 10, width: previewWidth }, preview.style]}>
                 <Item item={active.source} layout={data.layout} previewWidth={previewWidth} animate={expanded && foreground} />
-            </DragPreview> : null}
+            </AnimatedView> : null}
             {active?.source.kind === "guild" && active.source.folderId && (drawerFolder || overlayFolder) && <View ref={drag.exitTarget} collapsable={false} onLayout={drag.measureExit} pointerEvents="none"
                 accessible accessibilityRole="image" accessibilityLabel="Move server out of folder"
                 accessibilityHint="Drag a server onto this arrow and release to make it standalone" style={[styles.exitTarget, { left: viewportWidth / 2 - 28, bottom: bottomInset + 24 }]}>
