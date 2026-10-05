@@ -14,6 +14,8 @@ Requires **Revenge Next**; these plugins do not support Revenge Classic, Bunny, 
 A compact server dock with a searchable server and DM drawer, grid/list layouts, folders, drag and drop, unread indicators, and native server menus.
 By **kmmiio99o, Rosie, and Benjii**.
 
+Version 1.0.11 brings the current Rain ServerDrawer gestures, UI-thread reordering, folder menu fixes, and collapsed-drawer performance improvements, including interruptible page and drawer springs.
+
 <details>
 <summary>Development</summary>
 
@@ -27,6 +29,8 @@ npm run package
 ```
 
 Plugin sources live in `plugins/<name>/js/` with a Next manifest alongside them. ZIPs are written to `build/dist/<id>@<version>.zip`.
+
+Use `npm run build` or `npm run package` to compile ServerDrawer's worklets for Discord's bundled Reanimated 3.19.4. The compiler is a development dependency; no Reanimated runtime is packaged.
 
 Bump the manifest version and push to `main` to release. GitHub Actions validates and publishes immutable ZIPs and the Next index to `gh-pages`, then deploys that repository to Pages. Next verifies artifact SHA-256 hashes.
 

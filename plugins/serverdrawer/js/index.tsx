@@ -6,7 +6,7 @@ import { withDependencies, withName, withProps } from "@revenge-mod/modules/find
 import { getJsonStorage, pluginStoragePathFor } from "@revenge-mod/json-storage";
 import React from "react";
 import * as Native from "react-native";
-import { createServerDrawerSurface } from "./surface";
+import { createServerDrawerSurface, FLOATING_YOU_BAR } from "./surface";
 import type * as t from "./types";
 
 function findModule<T extends object>(filter: ReturnType<typeof withProps<T>>) {
@@ -56,7 +56,7 @@ export default plugin({
             const height = useInset();
             const active = useActive();
 
-            return active ? <Native.View pointerEvents="none" style={{ position: "absolute", bottom: 0, left: 0, right: 0, height, overflow: "hidden" }}>{element}</Native.View> : element;
+            return active && !FLOATING_YOU_BAR ? <Native.View pointerEvents="none" style={{ position: "absolute", bottom: 0, left: 0, right: 0, height, overflow: "hidden" }}>{element}</Native.View> : element;
         }
 
         function ServerDrawerLeftPanel({ element }: t.ElementProps) {
@@ -77,7 +77,9 @@ export default plugin({
                             return Math.max(0, Number.isFinite(height) ? height : 0);
                         };
                         DrawerSurface = createServerDrawerSurface(abort.signal, useInset);
-                        cleanup(after(width, "default", (value: number) => value + DM_WIDTH));
+                        const chatLayout = findByProps("getChatLayout");
+                        if (typeof chatLayout?.getChatLayout !== "function") throw new Error("Native chat layout is unavailable");
+                        cleanup(after(width, "default", (value: number) => chatLayout.getChatLayout().isChatBesideChannelList ? value : value + DM_WIDTH));
                     }
                     setReady(true);
                 }).catch(error => console.error("[ServerDrawer] Initialization failed", error));

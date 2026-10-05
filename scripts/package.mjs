@@ -7,7 +7,7 @@ function run(args) {
     if (result.status !== 0) process.exit(result.status ?? 1);
 }
 run(["node_modules/typescript/bin/tsc", "--noEmit"]);
-run(["node_modules/@revenge-mod/plugin-cli/bin/revenge-plugin.js", "build"]);
+run(["scripts/build.mjs"]);
 mkdirSync("build/dist", { recursive: true });
 for (const folder of readdirSync("plugins", { withFileTypes: true })) {
     if (!folder.isDirectory()) continue;
