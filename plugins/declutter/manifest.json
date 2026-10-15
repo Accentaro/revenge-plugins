@@ -1,0 +1,20 @@
+{
+	"format": 1,
+	"id": "revenge-next.declutter",
+	"name": "Declutter",
+	"description": "Hide server boost goals, DM activity cards, profile cosmetics and payment settings.",
+	"author": "Benjii <463702169443368970>",
+	"icon": "EyeSlashIcon",
+	"version": "2.2.0",
+	"dependencies": {
+		"revenge.api": {
+			"version": ">=1 <2"
+		},
+		"discord": {
+			"version": "*"
+		}
+	},
+	"dist": {
+		"script": "index.js"
+	}
+}
