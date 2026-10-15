@@ -115,30 +115,6 @@
         }
       }
     },
-    "revenge-next.gif-stop": {
-      "name": "gif-stop",
-      "description": "Prevents GIFs from auto-sending from the picker and holds them in the chatbox.",
-      "author": "j <1356632712861192242>",
-      "icon": "GifIcon",
-      "channels": {
-        "latest": "1.0.0"
-      },
-      "versions": {
-        "1.0.0": {
-          "url": "https://accentaro.github.io/revenge-plugins/pool/revenge-next.gif-stop@1.0.0.zip",
-          "sha256": "e9141a09b69c91ec872da21e7dc6fcbfb8dc20c67d29dcab55452db6de8762a7",
-          "size": 17564,
-          "dependencies": {
-            "revenge.api": {
-              "version": ">=1 <2"
-            },
-            "discord": {
-              "version": "*"
-            }
-          }
-        }
-      }
-    },
     "revenge-next.quoter": {
       "name": "Quoter",
       "description": "Create quote images from messages.",
