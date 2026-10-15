@@ -3,6 +3,30 @@
   "name": "Plugins for revenge-next",
   "description": "My own variations of plugins, tweaked to my personal liking.",
   "plugins": {
+    "revenge-next.better-you-bar": {
+      "name": "BetterYouBar",
+      "description": "Adds Favorites and Settings shortcuts to the You bar. Based on Rain's BetterYouBar.",
+      "author": "j <1356632712861192242>",
+      "icon": "StarIcon",
+      "channels": {
+        "latest": "1.0.4"
+      },
+      "versions": {
+        "1.0.4": {
+          "url": "https://accentaro.github.io/revenge-plugins/pool/revenge-next.better-you-bar@1.0.4.zip",
+          "sha256": "ffae31c9a81bdc54dea2481ab0d07ec3f18776a1db4dac2fa68aa761a947fc37",
+          "size": 18011,
+          "dependencies": {
+            "revenge.api": {
+              "version": ">=1 <2"
+            },
+            "discord": {
+              "version": "*"
+            }
+          }
+        }
+      }
+    },
     "revenge-next.declutter": {
       "name": "Declutter",
       "description": "Hide server boost goals, DM activity cards, profile cosmetics and payment settings.",
@@ -80,6 +104,30 @@
           "url": "https://accentaro.github.io/revenge-plugins/pool/revenge-next.gif-providers@1.1.0.zip",
           "sha256": "7445ed8ae0344d4f4f0419dad37c9cab282179b20d8aef5dba4ba728f982691d",
           "size": 22477,
+          "dependencies": {
+            "revenge.api": {
+              "version": ">=1 <2"
+            },
+            "discord": {
+              "version": "*"
+            }
+          }
+        }
+      }
+    },
+    "revenge-next.gif-stop": {
+      "name": "gif-stop",
+      "description": "Prevents GIFs from auto-sending from the picker and holds them in the chatbox.",
+      "author": "j <1356632712861192242>",
+      "icon": "GifIcon",
+      "channels": {
+        "latest": "1.0.0"
+      },
+      "versions": {
+        "1.0.0": {
+          "url": "https://accentaro.github.io/revenge-plugins/pool/revenge-next.gif-stop@1.0.0.zip",
+          "sha256": "e9141a09b69c91ec872da21e7dc6fcbfb8dc20c67d29dcab55452db6de8762a7",
+          "size": 17564,
           "dependencies": {
             "revenge.api": {
               "version": ">=1 <2"
