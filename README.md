@@ -17,13 +17,14 @@ By **kmmiio99o, Rosie, and Benjii**.
 
 ### Declutter
 Hide server boost goals, DM activity cards, profile cosmetics and payment settings.
+By **kmmiio99o, Benjii**.
 
 ### GIF Collections
 Organise GIFs into collections, import and export JSON backups, and optionally sync using your own server endpoint.
 
 ### GIF Providers
 Search Tenor, Giphy and Klipy together in the GIF picker.
-By **Livie**, with contributions from **Benjii**.
+By **Livie, Benjii**.
 
 ### Quoter
 Create quote images from messages, preview them and send them as attachments.
