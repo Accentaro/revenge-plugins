@@ -27,10 +27,6 @@ By **Benjii**
 Search Tenor, Giphy and Klipy together in the GIF picker.
 By **Livie, Benjii**.
 
-### GIF Stop
-Media from the GIF picker goes to chat instead of sending instantly.
-By **Benjii**
-
 ### Quoter
 Create quote images from messages, preview them and send them as attachments.
 By **Benjii**
