@@ -1,7 +1,11 @@
 /** @jsxImportSource . */
 import { getModuleWithImportedPath } from '@revenge-mod/discord/utils/modules/finders'
 import { getModules } from '@revenge-mod/modules/finders'
-import { withName, withProps } from '@revenge-mod/modules/finders/filters'
+import {
+	createFilterGenerator,
+	withName,
+	withProps,
+} from '@revenge-mod/modules/finders/filters'
 import { after, instead } from '@revenge-mod/patcher'
 import { ReactJSXRuntime } from '@revenge-mod/react'
 import { afterJSX } from '@revenge-mod/react/jsx-runtime'
@@ -108,7 +112,11 @@ export default plugin<{ jsonStorage: Settings }>({
 				),
 			)
 		}
-		const watch = (filter: Filter, install: (module: NativeModule) => void) =>
+		const watch = (
+			filter: Filter,
+			install: (module: NativeModule) => void,
+			returnNamespace = true,
+		) =>
 			cleanup(
 				getModules(
 					filter,
@@ -120,7 +128,7 @@ export default plugin<{ jsonStorage: Settings }>({
 							plugin.reportError(error)
 						}
 					},
-					{ returnNamespace: true },
+					{ returnNamespace },
 				),
 			)
 		const conceal = (target: unknown, key: string, flag: keyof Settings) =>
@@ -232,8 +240,18 @@ export default plugin<{ jsonStorage: Settings }>({
 		watch(withProps('useAvatarDecoration', 'getAvatarDecoration'), module =>
 			conceal(module, 'useAvatarDecoration', 'hideAvatarDecorations'),
 		)
-		watch(withProps('useNameplate'), module =>
-			conceal(module, 'useNameplate', 'hideNameplates'),
+		watch(
+			withProps('useNameplate').and(
+				createFilterGenerator(
+					(_, _id, exports) =>
+						exports !== null &&
+						typeof exports === 'object' &&
+						typeof exports.useNameplate === 'function',
+					() => 'declutter.callableUseNameplate',
+				)(),
+			),
+			module => conceal(module, 'useNameplate', 'hideNameplates'),
+			false,
 		)
 		watch(withProps('usePreloadProfileEffect'), module =>
 			conceal(module, 'default', 'hideProfileEffects'),
