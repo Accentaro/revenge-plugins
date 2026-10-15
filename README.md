@@ -21,13 +21,23 @@ By **kmmiio99o, Benjii**.
 
 ### GIF Collections
 Organise GIFs into collections, import and export JSON backups, and optionally sync using your own server endpoint.
+By **Benjii**
 
 ### GIF Providers
 Search Tenor, Giphy and Klipy together in the GIF picker.
 By **Livie, Benjii**.
 
+### GIF Stop
+Media from the GIF picker goes to chat instead of sending instantly.
+By **Benjii**
+
 ### Quoter
 Create quote images from messages, preview them and send them as attachments.
+By **Benjii**
+
+### Better You Bar
+Introduces a favorites and settings button to the you bar.
+by **Joamonca, Benjii**
 
 ## licenses
 Rain-derived plugin code retains [MPL-2.0](LICENSE.rain). The Revenge Next runtime and template code retain [GPL-3.0](LICENSE). Quoter includes gifenc by Matt DesLauriers under its embedded MIT license.
