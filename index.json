@@ -1,91 +1,126 @@
 {
   "format": 1,
-  "name": "Rain plugins for Revenge",
-  "description": "Standalone Rain plugins ported to Revenge Next.",
+  "name": "Plugins for revenge-next",
+  "description": "My own variations of plugins, tweaked to my personal liking.",
   "plugins": {
-    "dev.rain.serverdrawer": {
-      "name": "ServerDrawer",
-      "description": "A compact server dock with a searchable server and DM drawer, folders, and drag and drop.",
-      "author": "kmmiio99o, Rosie, Benjii",
+    "revenge-next.declutter": {
+      "name": "Declutter",
+      "description": "Hide server boost goals, DM activity cards, profile cosmetics and payment settings.",
+      "author": "Benjii <463702169443368970>",
+      "icon": "EyeSlashIcon",
       "channels": {
-        "latest": "1.0.12"
+        "latest": "2.2.0"
+      },
+      "versions": {
+        "2.2.0": {
+          "url": "https://accentaro.github.io/revenge-plugins/pool/revenge-next.declutter@2.2.0.zip",
+          "sha256": "cdc54b925ab74307690a46f1f0a9e36e6d49271f8643d2d3a74282c928899964",
+          "size": 20941,
+          "dependencies": {
+            "revenge.api": {
+              "version": ">=1 <2"
+            },
+            "discord": {
+              "version": "*"
+            }
+          }
+        }
+      }
+    },
+    "revenge-next.gif-collections": {
+      "name": "GIF Collections",
+      "description": "Organise GIFs into collections, with portable backups and optional cloud sync.",
+      "author": "Benjii <463702169443368970>",
+      "icon": "FolderIcon",
+      "channels": {
+        "latest": "1.0.2"
+      },
+      "versions": {
+        "1.0.2": {
+          "url": "https://accentaro.github.io/revenge-plugins/pool/revenge-next.gif-collections@1.0.2.zip",
+          "sha256": "dbd0df9cf38d53a776495d5e6fc46b7d8193f650f3ca3e825f0bbf1e58ebbce4",
+          "size": 39752,
+          "dependencies": {
+            "revenge.api": {
+              "version": ">=1.1.0 <2"
+            },
+            "discord": {
+              "version": "*"
+            }
+          }
+        }
+      }
+    },
+    "revenge-next.gif-providers": {
+      "name": "GIF Providers",
+      "description": "Search Tenor, Giphy and Klipy together in the GIF picker.",
+      "author": "Livie <755950362342457384>",
+      "contributors": [
+        "Benjii <463702169443368970>"
+      ],
+      "icon": "GifIcon",
+      "channels": {
+        "latest": "1.1.0"
+      },
+      "versions": {
+        "1.1.0": {
+          "url": "https://accentaro.github.io/revenge-plugins/pool/revenge-next.gif-providers@1.1.0.zip",
+          "sha256": "7445ed8ae0344d4f4f0419dad37c9cab282179b20d8aef5dba4ba728f982691d",
+          "size": 22477,
+          "dependencies": {
+            "revenge.api": {
+              "version": ">=1 <2"
+            },
+            "discord": {
+              "version": "*"
+            }
+          }
+        }
+      }
+    },
+    "revenge-next.quoter": {
+      "name": "Quoter",
+      "description": "Create quote images from messages.",
+      "author": "Benjii <463702169443368970>",
+      "icon": "QuoteIcon",
+      "channels": {
+        "latest": "1.2.0"
+      },
+      "versions": {
+        "1.2.0": {
+          "url": "https://accentaro.github.io/revenge-plugins/pool/revenge-next.quoter@1.2.0.zip",
+          "sha256": "784234c26a54cd9a03196f4c25b0ce3491a8553d4b0043ccbd4938b364ab33f8",
+          "size": 37023,
+          "dependencies": {
+            "revenge.api": {
+              "version": ">=1 <2"
+            },
+            "discord": {
+              "version": "*"
+            }
+          }
+        }
+      }
+    },
+    "revenge-next.server-drawer": {
+      "name": "Server Drawer",
+      "description": "A compact server dock with a searchable server and DM drawer, folders, and drag and drop.",
+      "author": "kmmiio99o, Rosie and Benjii <879393496627306587> <1356936317501571214> <463702169443368970>",
+      "icon": "ServersIcon",
+      "channels": {
+        "latest": "1.0.0"
       },
       "versions": {
         "1.0.0": {
-          "url": "https://accentaro.github.io/revenge-plugins/pool/dev.rain.serverdrawer@1.0.0.zip",
-          "sha256": "efff2132f2648ef49f66d6664fa8fee082b4958b8e064f531f455e69b830e1dc",
-          "size": 17161,
+          "url": "https://accentaro.github.io/revenge-plugins/pool/revenge-next.server-drawer@1.0.0.zip",
+          "sha256": "d153eecba8b9e4831d1d4195130056489a8f4c912986d493f5e551dbfc8caccf",
+          "size": 32802,
           "dependencies": {
             "revenge.api": {
               "version": ">=1 <2"
             },
             "discord": {
-              "version": ">=344.13 <345"
-            }
-          }
-        },
-        "1.0.1": {
-          "url": "https://accentaro.github.io/revenge-plugins/pool/dev.rain.serverdrawer@1.0.1.zip",
-          "sha256": "84b3d7712ded8ecdc88de69b89a4f80b771d63e734d9908d273ad572639d360c",
-          "size": 17161,
-          "dependencies": {
-            "revenge.api": {
-              "version": ">=1 <2"
-            },
-            "discord": {
-              "version": ">=344.13 <347"
-            }
-          }
-        },
-        "1.0.10": {
-          "url": "https://accentaro.github.io/revenge-plugins/pool/dev.rain.serverdrawer@1.0.10.zip",
-          "sha256": "92b67ef9b7c42d263f75b8147cc291d8e50ad46139ccd0df30224d40837185f4",
-          "size": 12052,
-          "dependencies": {
-            "revenge.api": {
-              "version": ">=1 <2"
-            },
-            "discord": {
-              "version": ">=344.13 <347"
-            }
-          }
-        },
-        "1.0.11": {
-          "url": "https://accentaro.github.io/revenge-plugins/pool/dev.rain.serverdrawer@1.0.11.zip",
-          "sha256": "fb22f7e7c6b8f0066c425ce4853cddfbb695d6eae8cfec1b43bec21de5ca23e3",
-          "size": 19903,
-          "dependencies": {
-            "revenge.api": {
-              "version": ">=1 <2"
-            },
-            "discord": {
-              "version": ">=344.13 <347"
-            }
-          }
-        },
-        "1.0.12": {
-          "url": "https://accentaro.github.io/revenge-plugins/pool/dev.rain.serverdrawer@1.0.12.zip",
-          "sha256": "0945355d6deb72c16a9ca187d0eb9a61b9c188ec0346ebf270db367866a382d9",
-          "size": 14646,
-          "dependencies": {
-            "revenge.api": {
-              "version": ">=1 <2"
-            },
-            "discord": {
-              "version": ">=344.13 <347"
-            }
-          }
-        },
-        "1.0.9": {
-          "url": "https://accentaro.github.io/revenge-plugins/pool/dev.rain.serverdrawer@1.0.9.zip",
-          "sha256": "869c20e6b6a749b2588cf6ad7e778849ab1468ec339c93ca54c5641675c13cba",
-          "size": 18025,
-          "dependencies": {
-            "revenge.api": {
-              "version": ">=1 <2"
-            },
-            "discord": {
-              "version": ">=344.13 <347"
+              "version": "*"
             }
           }
         }
