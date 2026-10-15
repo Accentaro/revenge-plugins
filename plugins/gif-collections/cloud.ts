@@ -38,7 +38,7 @@ export function cloudState(accountId: string): CloudState {
 	return (
 		useCollectionStore.getState().cloud[accountId] ?? {
 			enabled: false,
-			server: 'https://collections.benjiisworld.com',
+			server: '',
 			replica: emptyReplica(),
 		}
 	)
@@ -61,6 +61,10 @@ export function setCloud(accountId: string, update: Partial<CloudState>) {
 }
 
 export async function setEnabled(accountId: string, enabled: boolean) {
+	if (enabled && !cloudState(accountId).server)
+		throw new Error(
+			'Set your sync server in Advanced before enabling Cloud Sync.',
+		)
 	if (!enabled) controller?.abort()
 	const state = useCollectionStore.getState()
 	const collections = normalize(state.accounts[accountId] ?? [])
