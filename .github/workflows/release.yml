@@ -31,6 +31,11 @@ jobs:
         with:
           fetch-depth: 0 # Existing tags, so a re-run doesn't try to recreate one.
 
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 25
+      - uses: gradle/actions/setup-gradle@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -47,8 +52,11 @@ jobs:
 
       - name: Build plugins
         if: steps.plan.outputs.count != '0'
+        env:
+          GITHUB_TOKEN: ${{ secrets.READ_PACKAGES }}
         run: |
           npm run lint
+          ./gradlew :plugins:gif-collections:dexJar --no-daemon
           npm run package
 
       - name: Publish to the pool

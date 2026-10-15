@@ -3,3 +3,7 @@ build/
 plugins/*/build/
 .toolchain/
 .DS_Store
+
+.gradle/
+.kotlin/
+local.properties

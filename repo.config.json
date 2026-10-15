@@ -1,5 +1,5 @@
 {
-    "name": "Rain plugins for Revenge",
-    "description": "Standalone Rain plugins ported to Revenge Next.",
-    "channels": {}
+	"name": "Plugins for revenge-next",
+	"description": "My own variations of plugins, tweaked to my personal liking.",
+	"channels": {}
 }

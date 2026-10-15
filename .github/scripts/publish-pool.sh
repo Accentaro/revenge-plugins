@@ -21,6 +21,9 @@ done < plan.tsv
 attempt_publish() {
     mkdir -p "$POOL_CHECKOUT/pool"
 
+    # Replaced by the local revenge-next.server-drawer plugin.
+    rm -f "$POOL_CHECKOUT"/pool/dev.rain.serverdrawer@*.zip
+
     while IFS=$'\t' read -r zip file; do
         # Retries reset the checkout, so we need to copy the artifact here.
         cp "$zip" "$POOL_CHECKOUT/pool/${file}" || return 1

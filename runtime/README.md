@@ -1,6 +1,19 @@
 # Pinned Revenge Next runtime
-This is the unmodified official production artifact from [Revenge Next build 34494844176](https://github.com/revenge-mod/revenge-bundle-next/actions/runs/34494844176).
-Source commit: [ac8c59095ed67b5f780366dc11d8df31fffb0181](https://github.com/revenge-mod/revenge-bundle-next/tree/ac8c59095ed67b5f780366dc11d8df31fffb0181).
-SHA-256: `62f4c9e1632ae9cf6a47f35976acf2784ee1c0b92524a8a6565b64347893073b`.
-License: GPL-3.0, see [the upstream license](https://github.com/revenge-mod/revenge-bundle-next/blob/ac8c59095ed67b5f780366dc11d8df31fffb0181/LICENSE).
-The runtime is pinned here so the development phone can start without an ADB connection or a local HTTP server. Installing ServerDrawer does not change anyone's loader configuration.
+
+Production build from local Revenge Next source at [e4d0712dafb5f71588b9971ad38f69e975043ae9](https://github.com/revenge-mod/revenge-bundle-next/tree/e4d0712dafb5f71588b9971ad38f69e975043ae9).
+Includes the local plugin reload fixes: preserve pending reload flags and mark late starts after native restart completes.
+The build script also supports an optional development marker. This production bundle does not set it.
+
+SHA-256: `0db0e37c92074164302d6016f652d45976fdb1799561cc2cb5d3bf9ac1ed1cdc`.
+License: [GPL-3.0](../LICENSE). Corresponding source: [source.zip](source.zip).
+
+To rebuild, extract the source and run `deno install --frozen`, then `deno run build` in a Git checkout at that commit with these environment variables:
+
+```text
+NODE_ENV=production
+REVENGE_DISCORD_SERVER_URL=https://discord.com/invite/ddcQf3s2Uq
+REVENGE_SOURCE_REPOSITORY_URL=https://github.com/Accentaro/revenge-plugins/tree/main/runtime
+REVENGE_LICENSE_URL=https://github.com/revenge-mod/revenge-bundle-next/blob/e4d0712/LICENSE
+```
+
+The bundle remains available at its existing raw GitHub URL. Installing a plugin does not change the loader configuration.

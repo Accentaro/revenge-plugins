@@ -1,0 +1,21 @@
+{
+	"format": 1,
+	"id": "revenge-next.gif-providers",
+	"name": "GIF Providers",
+	"description": "Search Tenor, Giphy and Klipy together in the GIF picker.",
+	"author": "Livie <755950362342457384>",
+	"contributors": ["Benjii <463702169443368970>"],
+	"icon": "GifIcon",
+	"version": "1.1.0",
+	"dependencies": {
+		"revenge.api": {
+			"version": ">=1 <2"
+		},
+		"discord": {
+			"version": "*"
+		}
+	},
+	"dist": {
+		"script": "index.js"
+	}
+}
