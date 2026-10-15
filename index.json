@@ -121,13 +121,26 @@
       "author": "kmmiio99o, Rosie and Benjii <879393496627306587> <1356936317501571214> <463702169443368970>",
       "icon": "ServersIcon",
       "channels": {
-        "latest": "1.0.0"
+        "latest": "1.0.1"
       },
       "versions": {
         "1.0.0": {
           "url": "https://accentaro.github.io/revenge-plugins/pool/revenge-next.server-drawer@1.0.0.zip",
           "sha256": "d153eecba8b9e4831d1d4195130056489a8f4c912986d493f5e551dbfc8caccf",
           "size": 32802,
+          "dependencies": {
+            "revenge.api": {
+              "version": ">=1 <2"
+            },
+            "discord": {
+              "version": "*"
+            }
+          }
+        },
+        "1.0.1": {
+          "url": "https://accentaro.github.io/revenge-plugins/pool/revenge-next.server-drawer@1.0.1.zip",
+          "sha256": "008e9fa9b5fe970ac37b5af96f3838da538a36b07b4d9d36bf3649078a646330",
+          "size": 32888,
           "dependencies": {
             "revenge.api": {
               "version": ">=1 <2"
