@@ -15,8 +15,8 @@ import { createServerDrawer, DOCK_REST_OFFSET } from './surface'
 import type * as t from './types'
 
 type TabsComponent = (props: Record<string, unknown>) => React.ReactElement<{
-	children: React.ReactElement<Record<string, unknown>, t.PanelComponent>
-}>
+	children?: React.ReactNode
+}> | null
 type NativeTabs = React.MemoExoticComponent<TabsComponent> & {
 	compare?: (
 		previous: Record<string, unknown>,
@@ -48,8 +48,8 @@ export default plugin<{ jsonStorage: t.ServerDrawerPreferences }>({
 			getModuleWithImportedPath<{
 				default: {
 					type: (props: Record<string, unknown>) => React.ReactElement<{
-						children: React.ReactElement<Record<string, unknown>, NativeTabs>
-					}>
+						children?: React.ReactElement<Record<string, unknown>, NativeTabs>
+					}> | null
 				}
 			}>('components_native/MainChannels.tsx', module => {
 				if (abort.signal.aborted) return
@@ -57,6 +57,12 @@ export default plugin<{ jsonStorage: t.ServerDrawerPreferences }>({
 				let failed = false
 				const initialize = (element: t.NativePanel) => {
 					if (failed || abort.signal.aborted) return element
+					if (
+						!React.isValidElement(element) ||
+						!Array.isArray(element.props.children) ||
+						!React.isValidElement(element.props.children[1])
+					)
+						return element
 					if (Panel) return <Panel key={element.key} element={element} />
 					try {
 						const [inset] = lookupModule(
@@ -162,7 +168,13 @@ export default plugin<{ jsonStorage: t.ServerDrawerPreferences }>({
 				let Tabs: React.ComponentType<Record<string, unknown>> | undefined
 				cleanup(
 					after(module.default, 'type', element => {
+						if (!React.isValidElement(element)) return element
 						const tabs = element.props.children
+						if (
+							!React.isValidElement(tabs) ||
+							typeof tabs.type?.type !== 'function'
+						)
+							return element
 						if (!Tabs) {
 							const originalTabs = tabs.type.type
 							let originalPanel: t.PanelComponent
@@ -179,14 +191,16 @@ export default plugin<{ jsonStorage: t.ServerDrawerPreferences }>({
 							Tabs = React.memo(function DrawerTabs(
 								props: Record<string, unknown>,
 							) {
-								const rendered = originalTabs(props) as React.ReactElement<{
-									children: React.ReactElement<
-										Record<string, unknown>,
-										t.PanelComponent
-									>
-								}>
+								const rendered = originalTabs(props)
+								if (!React.isValidElement(rendered)) return rendered
 								const child = rendered.props.children
-								originalPanel = child.type
+								// Startup renders can omit the panel. Leave them intact until it exists.
+								if (
+									!React.isValidElement<Record<string, unknown>>(child) ||
+									typeof child.type !== 'function'
+								)
+									return rendered
+								originalPanel = child.type as t.PanelComponent
 								return React.cloneElement(rendered, {
 									children: <LeftPanel key={child.key} {...child.props} />,
 								})
