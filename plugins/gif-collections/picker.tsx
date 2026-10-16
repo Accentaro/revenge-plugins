@@ -43,7 +43,10 @@ export function collectionHeader(
 	props: HeaderProps,
 ): ReactNode {
 	const replace = (node: ReactNode): ReactNode => {
-		if (!isValidElement<CategoryContentProps>(node)) return node
+		if (!isValidElement<CategoryContentProps & { header?: ReactNode }>(node))
+			return node
+		if (isValidElement(node.props.header))
+			return cloneElement(node, { header: replace(node.props.header) })
 		if (node.props.onPress === props.onQueryClear) {
 			return cloneElement(
 				node,
@@ -223,19 +226,12 @@ export function PickerFrame({
 			original,
 			{},
 			<View style={{ flex: 1 }}>
-				<Design.Stack spacing={12} style={{ paddingVertical: 12 }}>
-					<Header
-						{...header}
-						categoryType="Category"
-						collectionTitle={collection.name}
-						onQueryClear={back}
-					/>
-					<Design.TextInput
-						placeholder="Search GIFs"
-						value={query}
-						onChange={setQuery}
-					/>
-				</Design.Stack>
+				<Header
+					{...header}
+					collectionTitle={collection.name}
+					onQueryClear={back}
+					onFavoritesQueryChange={setQuery}
+				/>
 				{gifs.length ? (
 					<Results
 						key={`${collection.id}:${query}`}
