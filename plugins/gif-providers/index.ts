@@ -71,21 +71,19 @@ export default plugin<{ jsonStorage: SettingsData }>({
 				},
 			),
 		)
-		// Wait for lazy GIF modules; disabling also settles pending waits.
+		// Discover lazy GIF modules without blocking the plugin start lifecycle.
 		const wait = <F extends Filter>(filter: F) =>
 			new Promise<FilterResult<F> | undefined>(resolve => {
 				patches.push(() => resolve(undefined), getModules(filter, resolve))
 			})
-		const [module, viewStore] = await Promise.all([
+		const installation = Promise.all([
 			wait(withProps('HTTP', 'get', 'post', 'put', 'patch', 'del')),
 			wait(withStoreName<GifViewStore>('GIFPickerViewStore')),
-		])
-		if (generation !== currentGeneration || !module || !viewStore) return
-		const http = module.HTTP
-		const get: HttpRequest = http.get.bind(http)
-		setActive(true)
-
-		try {
+		]).then(([module, viewStore]) => {
+			if (generation !== currentGeneration || !module || !viewStore) return
+			const http = module.HTTP
+			const get: HttpRequest = http.get.bind(http)
+			setActive(true)
 			patches.push(
 				getModules(
 					withProps('GIF_PROVIDER', 'getSearchPlaceholder'),
@@ -271,9 +269,12 @@ export default plugin<{ jsonStorage: SettingsData }>({
 				),
 			)
 			patches.push(useGifProvidersSettings.subscribe(cancelRequests))
-		} catch (error) {
+		})
+		void installation.catch(error => {
+			if (generation !== currentGeneration) return
+			setActive(false)
 			cleanup()
-			throw error
-		}
+			plugin.reportError(error)
+		})
 	},
 })
