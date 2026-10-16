@@ -97,13 +97,26 @@
       ],
       "icon": "GifIcon",
       "channels": {
-        "latest": "1.1.0"
+        "latest": "1.1.1"
       },
       "versions": {
         "1.1.0": {
           "url": "https://accentaro.github.io/revenge-plugins/pool/revenge-next.gif-providers@1.1.0.zip",
           "sha256": "7445ed8ae0344d4f4f0419dad37c9cab282179b20d8aef5dba4ba728f982691d",
           "size": 22477,
+          "dependencies": {
+            "revenge.api": {
+              "version": ">=1 <2"
+            },
+            "discord": {
+              "version": "*"
+            }
+          }
+        },
+        "1.1.1": {
+          "url": "https://accentaro.github.io/revenge-plugins/pool/revenge-next.gif-providers@1.1.1.zip",
+          "sha256": "8ecdafc7cc23c5fe043f07d6a3e914d475b36a2a8fc02210ef6d35ccda0f8364",
+          "size": 22480,
           "dependencies": {
             "revenge.api": {
               "version": ">=1 <2"
