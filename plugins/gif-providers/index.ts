@@ -1,6 +1,6 @@
 import { ToastActionCreators } from '@revenge-mod/discord/actions'
-import { onFluxEventDispatched, Stores } from '@revenge-mod/discord/flux'
-import { getModules, lookupModule } from '@revenge-mod/modules/finders'
+import { onFluxEventDispatched, withStoreName } from '@revenge-mod/discord/flux'
+import { getModules } from '@revenge-mod/modules/finders'
 import { withProps } from '@revenge-mod/modules/finders/filters'
 import { after, instead } from '@revenge-mod/patcher'
 import { patchPicker } from './picker'
@@ -17,6 +17,7 @@ import {
 	setActive,
 	useGifProvidersSettings,
 } from './storage'
+import type { Filter, FilterResult } from '@revenge-mod/modules/finders/filters'
 import type { GifProvidersSettings as SettingsData } from './storage'
 import type {
 	GifActions,
@@ -61,7 +62,6 @@ export default plugin<{ jsonStorage: SettingsData }>({
 		configureStorage(jsonStorage)
 		await loadSettings()
 		if (generation !== currentGeneration) return
-		setActive(true)
 		let actions: GifActions | undefined
 		patches.push(
 			getModules(
@@ -71,14 +71,19 @@ export default plugin<{ jsonStorage: SettingsData }>({
 				},
 			),
 		)
-		const http = lookupModule(
-			withProps('HTTP', 'get', 'post', 'put', 'patch', 'del'),
-		)[0]?.HTTP
-		const viewStore = Stores.GIFPickerViewStore as unknown as GifViewStore
-
-		if (!http || !viewStore)
-			throw new Error('GIF Providers: native GIF modules unavailable')
+		// Wait for lazy GIF modules; disabling also settles pending waits.
+		const wait = <F extends Filter>(filter: F) =>
+			new Promise<FilterResult<F> | undefined>(resolve => {
+				patches.push(() => resolve(undefined), getModules(filter, resolve))
+			})
+		const [module, viewStore] = await Promise.all([
+			wait(withProps('HTTP', 'get', 'post', 'put', 'patch', 'del')),
+			wait(withStoreName<GifViewStore>('GIFPickerViewStore')),
+		])
+		if (generation !== currentGeneration || !module || !viewStore) return
+		const http = module.HTTP
 		const get: HttpRequest = http.get.bind(http)
+		setActive(true)
 
 		try {
 			patches.push(

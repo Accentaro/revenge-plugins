@@ -6,7 +6,7 @@
 	"author": "Livie <755950362342457384>",
 	"contributors": ["Benjii <463702169443368970>"],
 	"icon": "GifIcon",
-	"version": "1.1.0",
+	"version": "1.1.1",
 	"dependencies": {
 		"revenge.api": {
 			"version": ">=1 <2"
