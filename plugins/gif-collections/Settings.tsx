@@ -206,7 +206,7 @@ export default function Settings({
 						<Design.TableRowGroup title="Backups">
 							<Design.TableRow
 								label="Export Backup"
-								subLabel="Download your collections as a JSON file"
+								subLabel="Choose where to save your collections as a JSON file"
 								disabled={busy}
 								onPress={() => void run(() => exportLocal(accountId))}
 							/>

@@ -1,6 +1,7 @@
 import { ToastActionCreators } from '@revenge-mod/discord/actions'
+import { FileModule } from '@revenge-mod/discord/native'
 import { callNativeMethod, getNativeModule } from '@revenge-mod/modules/native'
-import { AppState, PermissionsAndroid, Platform } from 'react-native'
+import { AppState, Platform } from 'react-native'
 import { authorize, cancelAuthorization } from './authorize'
 import { fromRecords, newId, normalize, toRecords } from './metadata'
 import { currentAccountId } from './native'
@@ -323,28 +324,48 @@ export async function syncNow(accountId: string) {
 }
 
 export async function exportLocal(accountId: string) {
-	if (Platform.OS !== 'android')
-		throw new Error('Direct backup downloads require Android.')
-	if (
-		Number(Platform.Version) < 29 &&
-		(await PermissionsAndroid.request(
-			PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE,
-		)) !== PermissionsAndroid.RESULTS.GRANTED
-	)
-		throw new Error('Storage permission is required to save the backup.')
 	updateCollections(accountId, normalize, true)
 	await flushCollections()
 	const collections = useCollectionStore.getState().accounts[accountId] ?? []
 	const value = JSON.stringify(exportBackup(toRecords(collections)), null, 2)
-	await callNativeMethod('revenge-next.gif-collections.export', [value])
+	if (new Blob([value]).size > 16 * 1024 * 1024)
+		throw new Error('Backup is too large.')
+	const fileName = 'gif-collections-backup.json'
+	const path = await FileModule.writeFile('cache', fileName, value, 'utf8')
+	const options = {
+		sourceUris: [encodeURI(`file://${path}`)],
+		fileName,
+		mimeType: 'application/json',
+		copy: true,
+	}
+	const picker = getNativeModule<{
+		saveDocument(value: typeof options): Promise<unknown>
+		writeDocuments(options: unknown): Promise<{ error: string | null }[]>
+	}>('RNDocumentPicker')!
+	try {
+		// The native calls used by Discord's saveDocuments wrapper.
+		const result = await picker.writeDocuments(
+			Platform.OS === 'android' ? await picker.saveDocument(options) : options,
+		)
+		if (result.length !== 1 || result[0].error)
+			throw new Error(result[0]?.error || 'Could not save the backup.')
+	} catch (error) {
+		if (
+			error &&
+			typeof error === 'object' &&
+			'code' in error &&
+			error.code === 'OPERATION_CANCELED'
+		)
+			return
+		throw error
+	}
 	ToastActionCreators.open('GIF_COLLECTIONS_BACKUP_DOWNLOADED', {
-		text: 'Backup downloaded to Downloads.',
+		text: 'Backup saved.',
 	})
 }
 
 declare module '@revenge-mod/modules/native' {
 	interface NativeMethods {
-		'revenge-next.gif-collections.export': [[json: string], string]
 		'revenge-next.gif-collections.readBackup': [[uri: string], string]
 	}
 }
