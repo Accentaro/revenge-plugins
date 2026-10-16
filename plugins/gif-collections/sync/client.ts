@@ -151,9 +151,7 @@ export async function synchronize(adapter: SyncAdapter): Promise<boolean> {
 		}
 		throw new Error('Download paused. Choose Sync Now to continue.')
 	}
-	// Replay uncertain uploads before downloading; receiving our own successful
-	// write first would otherwise look like a conflicting remote edit.
-	if (adapter.read().flight) {
+	const uploadAndRefresh = async () => {
 		try {
 			await upload()
 		} catch (error) {
@@ -166,6 +164,9 @@ export async function synchronize(adapter: SyncAdapter): Promise<boolean> {
 			throw error
 		}
 	}
+	// Replay uncertain uploads before downloading; receiving our own successful
+	// write first would otherwise look like a conflicting remote edit.
+	if (adapter.read().flight) await uploadAndRefresh()
 	await download()
 	if (adapter.read().conflicts.length)
 		throw new SyncError(
@@ -181,17 +182,7 @@ export async function synchronize(adapter: SyncAdapter): Promise<boolean> {
 	for (let count = 0; count < 40 && adapter.read().pending.length; count++) {
 		ensureActive()
 		await adapter.write(current => beginBatch(current, maximum, maximumBytes))
-		try {
-			await upload()
-		} catch (error) {
-			if (
-				error instanceof SyncError &&
-				error.status === 409 &&
-				error.code !== 'sequence'
-			)
-				await download()
-			throw error
-		}
+		await uploadAndRefresh()
 	}
 	await download()
 	return !adapter.read().pending.length

@@ -123,12 +123,7 @@ export interface CategoryTileProps {
 	category: CategoryProps
 }
 
-export interface IconProps {
-	color?: string
-	size?: 'lg' | 'md' | 'sm' | 'xs' | 'xxs'
-}
-
-export interface CategoryContentProps extends TreeProps, IconProps {
+export interface CategoryContentProps extends TreeProps {
 	accessibilityLabel?: string
 	accessibilityHint?: string
 	onPress?: () => void
@@ -150,12 +145,6 @@ export interface CollectionPickerProps {
 export interface CollectionActionButtonProps {
 	gif: Gif
 	source?: { accountId: string; collectionId: string }
-}
-
-export interface CollectionTileProps {
-	collection: Collection
-	onSelect: () => void
-	render: ComponentType<CategoryProps>
 }
 
 export interface DragEvent {

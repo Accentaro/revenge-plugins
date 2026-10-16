@@ -87,6 +87,40 @@ export default function Settings({
 		return <Design.Text>Loading collections…</Design.Text>
 	const connected = isSignedIn(accountId)
 
+	const importBackup = async () => {
+		const incoming = await pickBackup()
+		if (!incoming) return
+		confirm(
+			'Replace collections?',
+			"Replace this account's local collections with the selected backup. If sync is enabled, these changes will also sync. Export a backup first.",
+			() => importLocal(accountId, incoming),
+		)
+	}
+	const loadDevices = async () => {
+		const response = object(await cloudRequest(accountId, '/v1/sessions'))
+		if (!Array.isArray(response.sessions) || response.sessions.length > 20)
+			throw new Error('Invalid device list.')
+		setDevices(
+			response.sessions.map(value => {
+				const item = object(value)
+				return {
+					id: text(item.id, 96),
+					label: text(item.label, 60),
+				}
+			}),
+		)
+	}
+	const saveServer = async () => {
+		if (
+			cloud.replica.pending.length ||
+			Object.keys(cloud.replica.records).length
+		)
+			throw new Error(
+				'Export your backup and delete the old cloud data before switching servers.',
+			)
+		setCloud(accountId, { server: serverOrigin(server) })
+	}
+
 	return (
 		<ScrollView style={{ flex: 1 }}>
 			<Design.Stack
@@ -180,17 +214,7 @@ export default function Settings({
 								label="Import Backup"
 								subLabel="Choose a JSON file. The backup takes precedence over local collections."
 								disabled={busy}
-								onPress={() =>
-									void run(async () => {
-										const incoming = await pickBackup()
-										if (!incoming) return
-										confirm(
-											'Replace collections?',
-											"Replace this account's local collections with the selected backup. If sync is enabled, these changes will also sync. Export a backup first.",
-											() => importLocal(accountId, incoming),
-										)
-									})
-								}
+								onPress={() => void run(importBackup)}
 							/>
 						</Design.TableRowGroup>
 						{cloud.replica.conflicts.length > 0 && (
@@ -221,27 +245,7 @@ export default function Settings({
 							<Design.TableRow
 								label="Connected Devices"
 								disabled={busy}
-								onPress={() =>
-									void run(async () => {
-										const response = object(
-											await cloudRequest(accountId, '/v1/sessions'),
-										)
-										if (
-											!Array.isArray(response.sessions) ||
-											response.sessions.length > 20
-										)
-											throw new Error('Invalid device list.')
-										setDevices(
-											response.sessions.map(value => {
-												const item = object(value)
-												return {
-													id: text(item.id, 96),
-													label: text(item.label, 60),
-												}
-											}),
-										)
-									})
-								}
+								onPress={() => void run(loadDevices)}
 							/>
 							{devices.map(device => (
 								<Design.TableRow
@@ -299,6 +303,7 @@ export default function Settings({
 						</Design.TableRowGroup>
 						<Design.TextInput
 							label="Sync server"
+							placeholder="https://sync.example.com"
 							value={server}
 							onChange={setServer}
 							editable={!busy && !cloud.sessionId && !cloud.enabled}
@@ -307,18 +312,7 @@ export default function Settings({
 							text="Save server"
 							variant="secondary"
 							disabled={busy || !!cloud.sessionId || cloud.enabled}
-							onPress={() =>
-								void run(async () => {
-									if (
-										cloud.replica.pending.length ||
-										Object.keys(cloud.replica.records).length
-									)
-										throw new Error(
-											'Export your backup and delete the old cloud data before switching servers.',
-										)
-									setCloud(accountId, { server: serverOrigin(server) })
-								})
-							}
+							onPress={() => void run(saveServer)}
 						/>
 					</Fragment>
 				)}

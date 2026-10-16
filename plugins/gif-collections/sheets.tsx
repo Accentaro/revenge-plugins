@@ -16,10 +16,7 @@ import {
 	useCollections,
 	useCollectionsEnabled,
 } from './storage'
-import type { ComponentType } from 'react'
-import type { FlatListProps } from 'react-native'
 import type {
-	Collection,
 	CollectionActionButtonProps,
 	CollectionEditorProps,
 	CollectionPickerProps,
@@ -138,11 +135,7 @@ function CollectionPicker({
 	removing = false,
 }: CollectionPickerProps) {
 	// Let the dropdown own its scroll gesture instead of the surrounding sheet.
-	const { FlatList: CollectionList } = getGestures() as {
-		FlatList: ComponentType<
-			FlatListProps<Collection> & { disallowInterruption: boolean }
-		>
-	}
+	const { FlatList: CollectionList } = getGestures()
 	const insets = ReactNativeSafeAreaContext.useSafeAreaInsets()
 	const storedCollections = useCollections(accountId)
 	const collections = removing

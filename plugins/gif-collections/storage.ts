@@ -10,19 +10,19 @@ import type { JsonStorage } from '@revenge-mod/json-storage'
 import type { Collection, CollectionStorage, Gif } from './types'
 
 interface State extends CollectionStorage {
+	_active: boolean
 	_hasHydrated: boolean
 	updateSettings(update: Partial<CollectionStorage>): void
 }
 let storage: JsonStorage<CollectionStorage>
 let reportError: (error: unknown) => void
 let loading: Promise<void> | undefined
-let active = false
 const listeners = new Set<(state: State, previous: State) => void>()
-const activeListeners = new Set<() => void>()
 let state: State = {
 	accounts: {},
 	cloud: {},
 	onlyShowCollections: false,
+	_active: false,
 	_hasHydrated: false,
 	updateSettings,
 }
@@ -46,13 +46,7 @@ function updateSettings(update: Partial<CollectionStorage>) {
 	publish(next)
 }
 export function collectionsActive() {
-	return active
-}
-function subscribeActive(listener: () => void) {
-	activeListeners.add(listener)
-	return () => {
-		activeListeners.delete(listener)
-	}
+	return state._active
 }
 export async function startStorage(
 	instance: JsonStorage<CollectionStorage>,
@@ -62,14 +56,10 @@ export async function startStorage(
 	configureStorage(instance, report)
 	await loadStorage()
 	if (signal.aborted) return
-	active = true
-	for (const listener of activeListeners) listener()
+	publish({ ...state, _active: true })
 	signal.addEventListener(
 		'abort',
-		() => {
-			active = false
-			for (const listener of activeListeners) listener()
-		},
+		() => publish({ ...state, _active: false }),
 		{ once: true },
 	)
 }
@@ -89,6 +79,7 @@ export async function loadStorage() {
 			if (!value?.accounts || !value.cloud)
 				throw new Error('Could not load collection storage.')
 			publish({
+				...state,
 				...value,
 				onlyShowCollections: value.onlyShowCollections ?? false,
 				_hasHydrated: true,
@@ -126,9 +117,7 @@ export const collectionSources = new WeakMap<
 >()
 
 export function useCollectionsEnabled() {
-	const enabled = useSyncExternalStore(subscribeActive, collectionsActive)
-	const hydrated = useCollectionStore(state => state._hasHydrated)
-	return enabled && hydrated
+	return useCollectionStore(state => state._active && state._hasHydrated)
 }
 
 export function useAccountId(): string | undefined {
@@ -246,27 +235,29 @@ export function saveCollection(
 	})
 }
 
-export function removeGif(accountId: string, collectionId: string, gif: Gif) {
+function updateGifs(
+	accountId: string,
+	collectionId: string,
+	update: (gifs: Gif[]) => Gif[],
+) {
 	updateCollections(accountId, collections =>
 		collections.map(collection => {
 			if (collection.id !== collectionId) return collection
-
-			return {
-				...collection,
-				gifs: collection.gifs.filter(item => item.url !== gif.url),
-			}
+			const gifs = update(collection.gifs)
+			return gifs === collection.gifs ? collection : { ...collection, gifs }
 		}),
 	)
 }
 
+export function removeGif(accountId: string, collectionId: string, gif: Gif) {
+	updateGifs(accountId, collectionId, gifs =>
+		gifs.filter(item => item.url !== gif.url),
+	)
+}
+
 export function addGif(accountId: string, collectionId: string, gif: Gif) {
-	updateCollections(accountId, collections =>
-		collections.map(collection =>
-			collection.id !== collectionId ||
-			collection.gifs.some(item => item.url === gif.url)
-				? collection
-				: { ...collection, gifs: [...collection.gifs, gif] },
-		),
+	updateGifs(accountId, collectionId, gifs =>
+		gifs.some(item => item.url === gif.url) ? gifs : [...gifs, gif],
 	)
 }
 
@@ -276,16 +267,11 @@ export function moveGif(
 	url: string,
 	direction: number,
 ) {
-	updateCollections(accountId, collections =>
-		collections.map(collection => {
-			if (collection.id !== collectionId) return collection
-
-			const gifs = moveItem(
-				collection.gifs,
-				collection.gifs.findIndex(gif => gif.url === url),
-				direction,
-			)
-			return gifs === collection.gifs ? collection : { ...collection, gifs }
-		}),
+	updateGifs(accountId, collectionId, gifs =>
+		moveItem(
+			gifs,
+			gifs.findIndex(gif => gif.url === url),
+			direction,
+		),
 	)
 }

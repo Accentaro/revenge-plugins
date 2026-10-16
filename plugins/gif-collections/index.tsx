@@ -63,119 +63,101 @@ export default plugin<{ jsonStorage: CollectionStorage }>({
 			([name]) => `revenge-next.gif-collections.memo(${name})`,
 			FilterScopes.Initialized,
 		)
-		function watch(
+		function patch<P>(
 			filter: Filter,
-			install: (module: Record<string, unknown>) => void,
-			namespace = true,
+			key: string,
+			transform: (props: P, result: ReactNode) => ReactNode,
 		) {
 			cleanup(
 				getModules(
 					filter,
-					module => {
+					target => {
 						if (abort.signal.aborted) return
 						try {
-							install(module as Record<string, unknown>)
+							if (typeof target[key] !== 'function')
+								throw new Error(`GIF Collections: missing native ${key}`)
+							cleanup(
+								instead(
+									target as Record<string, (...args: unknown[]) => ReactNode>,
+									key,
+									function (args, original) {
+										const result = Reflect.apply(original, this, args)
+										return abort.signal.aborted
+											? result
+											: transform(args[0] as P, result)
+									},
+								),
+							)
 						} catch (error) {
 							plugin.reportError(error)
 						}
 					},
-					{ returnNamespace: namespace },
+					{ returnNamespace: key === 'default' },
 				),
 			)
 		}
-		function patch<P>(
-			target: Record<string, unknown>,
-			key: string,
-			transform: (props: P, result: ReactNode) => ReactNode,
-		) {
-			if (typeof target[key] !== 'function')
-				throw new Error(`GIF Collections: missing native ${key}`)
-			cleanup(
-				instead(
-					target as Record<string, (...args: unknown[]) => ReactNode>,
-					key,
-					function (args, original) {
-						const result = Reflect.apply(original, this, args)
-						return abort.signal.aborted
-							? result
-							: transform(args[0] as P, result)
-					},
-				),
-			)
-		}
-		watch(
-			memoName('GIFPickerHeader'),
-			header =>
-				patch<HeaderProps>(header, 'type', (props, result) =>
-					props.collectionTitle && isValidElement<TreeProps>(result)
-						? collectionHeader(result, props)
-						: result,
-				),
-			false,
+		patch<HeaderProps>(memoName('GIFPickerHeader'), 'type', (props, result) =>
+			props.collectionTitle && isValidElement<TreeProps>(result)
+				? collectionHeader(result, props)
+				: result,
 		)
-		watch(withName('GIFPickerCategoryView'), category =>
-			patch<CategoryProps>(category, 'default', (props, result) =>
+		patch<CategoryProps>(
+			withName('GIFPickerCategoryView'),
+			'default',
+			(props, result) =>
 				isValidElement<CategoryContentProps>(result) && props.collectionTile ? (
 					<CategoryTile original={result} category={props} />
 				) : (
 					result
 				),
-			),
 		)
-		watch(
+		patch<MainCategoriesProps>(
 			memoName('GIFPickerCategoriesPage'),
-			page =>
-				patch<MainCategoriesProps>(page, 'type', (props, result) =>
-					props.collectionUI &&
-					isValidElement<NativeCategoryListProps>(result) &&
-					Array.isArray(result.props.sections) &&
-					typeof result.props.renderItem === 'function' ? (
-						<MainCategories original={result} page={props} />
-					) : (
-						result
-					),
+			'type',
+			(props, result) =>
+				props.collectionUI &&
+				isValidElement<NativeCategoryListProps>(result) &&
+				Array.isArray(result.props.sections) &&
+				typeof result.props.renderItem === 'function' ? (
+					<MainCategories original={result} page={props} />
+				) : (
+					result
 				),
-			false,
 		)
-		watch(
-			memoName('GIFPicker'),
-			picker =>
-				patch<PickerProps>(picker, 'type', (props, result) => {
-					if (
-						!isValidElement<TreeProps>(result) ||
-						typeof props.onPressGIF !== 'function'
-					)
-						return result
-					const [results] = lookupModule(
-						withName<ComponentType<ResultsProps>>('GIFPickerResultsList'),
-						{ initialize: false },
-					)
-					const [category] = lookupModule(withName('GIFPickerCategoryView'), {
-						returnNamespace: true,
-						initialize: false,
-					})
-					const [header] = lookupModule(memoName('GIFPickerHeader'), {
-						initialize: false,
-					})
-					if (!category || !header) return result
-					return (
-						<PickerFrame
-							original={result}
-							picker={props}
-							results={results}
-							categoryModule={
-								category as { default: ComponentType<CategoryProps> }
-							}
-							headerModule={
-								header as MemoExoticComponent<ComponentType<HeaderProps>>
-							}
-						/>
-					)
-				}),
-			false,
-		)
-		watch(withName('GIFPickerItemActionSheet'), sheet =>
-			patch<{ item: Gif }>(sheet, 'default', ({ item }, result) => {
+		patch<PickerProps>(memoName('GIFPicker'), 'type', (props, result) => {
+			if (
+				!isValidElement<TreeProps>(result) ||
+				typeof props.onPressGIF !== 'function'
+			)
+				return result
+			const [results] = lookupModule(
+				withName<ComponentType<ResultsProps>>('GIFPickerResultsList'),
+				{ initialize: false },
+			)
+			const [category] = lookupModule(withName('GIFPickerCategoryView'), {
+				returnNamespace: true,
+				initialize: false,
+			})
+			const [header] = lookupModule(memoName('GIFPickerHeader'), {
+				initialize: false,
+			})
+			if (!category || !header) return result
+			return (
+				<PickerFrame
+					original={result}
+					picker={props}
+					results={results}
+					categoryModule={category as { default: ComponentType<CategoryProps> }}
+					headerModule={
+						header as MemoExoticComponent<ComponentType<HeaderProps>>
+					}
+				/>
+			)
+		})
+		patch<{ item: Gif }>(
+			withName('GIFPickerItemActionSheet'),
+			'default',
+			({ item }, result) => {
 				if (
 					!isValidElement(result) ||
 					!item?.url ||
@@ -214,10 +196,12 @@ export default plugin<{ jsonStorage: CollectionStorage }>({
 					)
 				}
 				return append(result)
-			}),
+			},
 		)
-		watch(withName('MediaShareActionSheet'), media =>
-			patch<{ source: MediaSource }>(media, 'default', (props, result) => {
+		patch<{ source: MediaSource }>(
+			withName('MediaShareActionSheet'),
+			'default',
+			(props, result) => {
 				if (!props.source || !isValidElement<TreeProps>(result)) return result
 				const gif = mediaToGif(props.source)
 				return gif ? (
@@ -225,7 +209,7 @@ export default plugin<{ jsonStorage: CollectionStorage }>({
 				) : (
 					result
 				)
-			}),
+			},
 		)
 	},
 })

@@ -1,5 +1,6 @@
 /** @jsxImportSource . */
 import { Design } from '@revenge-mod/discord/design'
+import { lookupGeneratedIconComponent } from '@revenge-mod/utils/discord'
 import { findInTree } from '@revenge-mod/utils/tree'
 import {
 	Children,
@@ -20,7 +21,12 @@ import {
 	useCollections,
 	useCollectionsEnabled,
 } from './storage'
-import type { ReactElement, ReactNode } from 'react'
+import type {
+	ComponentProps,
+	ComponentType,
+	ReactElement,
+	ReactNode,
+} from 'react'
 import type {
 	CategoryContentProps,
 	CategoryProps,
@@ -78,7 +84,6 @@ export function MainCategories({
 	const ui = page.collectionUI!
 	const collections = useCollections(ui.accountId)
 	const onlyCollections = useCollectionStore(state => state.onlyShowCollections)
-	const [query, setQuery] = useState('')
 	const nativeCategories = useMemo(() => {
 		const categories: CategoryProps['item'][] = []
 		original.props.sections.forEach((rows, section) => {
@@ -99,42 +104,15 @@ export function MainCategories({
 				collections,
 				nativeCategories,
 				onlyCollections,
-				query,
 			),
-		[
-			page.favoritesCategory,
-			collections,
-			nativeCategories,
-			onlyCollections,
-			query,
-		],
+		[page.favoritesCategory, collections, nativeCategories, onlyCollections],
 	)
 	if (!enabled) return original
 	const Category = ui.category
 	return (
 		<View style={{ flex: 1 }}>
-			<Design.Stack
-				direction="horizontal"
-				spacing={8}
-				style={{ paddingVertical: 8, alignItems: 'center' }}
-			>
-				<View style={{ flex: 1 }}>
-					<Design.TextInput
-						placeholder="Search categories"
-						value={query}
-						onChange={setQuery}
-					/>
-				</View>
-				<Design.Button
-					text="New category"
-					size="sm"
-					variant="secondary"
-					grow={false}
-					onPress={() => editCollection({ accountId: ui.accountId })}
-				/>
-			</Design.Stack>
 			<CollectionGrid
-				key={`${page.columns}:${ui.columnWidth}:${query}`}
+				key={`${page.columns}:${ui.columnWidth}`}
 				items={items}
 				columns={page.columns}
 				columnWidth={ui.columnWidth}
@@ -220,13 +198,14 @@ export function PickerFrame({
 			})
 	}, [accountId, collection, query])
 	if (!enabled || !accountId) return original
-	const header = findInTree(
+	const headerElement = findInTree(
 		original,
 		(node): node is ReactElement<HeaderProps> =>
 			typeof node?.props?.onFavoritesQueryChange === 'function',
 		{ walkable: new Set(['props', 'children']) },
-	)?.props
-	if (!header) return original
+	)
+	if (!headerElement) return original
+	const header = headerElement.props
 	const categories = findInTree(
 		original,
 		(node): node is ReactElement<MainCategoriesProps> =>
@@ -279,8 +258,26 @@ export function PickerFrame({
 			</View>,
 		)
 	}
+	const PlusIcon = lookupGeneratedIconComponent('PlusSmallIcon')!
+	// Discord accepts icon elements; the public type still declares asset IDs.
+	const IconButton = Design.IconButton as ComponentType<
+		Omit<ComponentProps<typeof Design.IconButton>, 'icon'> & { icon: ReactNode }
+	>
 	const replace = (node: ReactNode): ReactNode => {
 		if (!isValidElement<TreeProps>(node)) return node
+		if (node === headerElement && header.categoryType === 'Search')
+			return (
+				<View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+					<View style={{ flex: 1, minWidth: 0 }}>{node}</View>
+					<IconButton
+						icon={<PlusIcon size="sm" />}
+						size="md"
+						variant="secondary"
+						accessibilityLabel="New category"
+						onPress={() => editCollection({ accountId })}
+					/>
+				</View>
+			)
 		if (node === categories)
 			return cloneElement(categories, {
 				collectionUI: {

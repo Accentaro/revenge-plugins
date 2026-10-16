@@ -5,9 +5,7 @@ export function mainPickerItems(
 	collections: Collection[],
 	native: CategoryProps['item'][],
 	onlyCollections: boolean,
-	query: string,
 ): GridItem[] {
-	const search = query.trim().toLowerCase()
 	const categoryItem = (
 		category: CategoryProps['item'],
 		index: number,
@@ -19,8 +17,8 @@ export function mainPickerItems(
 	})
 	return [
 		categoryItem(favourites, 0),
-		...collections.filter(item => item.name.toLowerCase().includes(search)),
-		...(!onlyCollections && !search
+		...collections,
+		...(!onlyCollections
 			? native
 					.filter(item => item.type !== 'Favorites')
 					.map((item, index) => categoryItem(item, index + 1))

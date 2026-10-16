@@ -21,7 +21,7 @@ import {
 	visible,
 } from './sync/replica'
 import type { Backup } from './sync/protocol'
-import type { CloudState } from './types'
+import type { CloudState, Collection } from './types'
 
 // Discord exposes no verified general-purpose secure credential store here.
 // Keep credentials in memory rather than in plaintext settings/backups.
@@ -48,11 +48,18 @@ export function isSignedIn(accountId: string): boolean {
 	return tokens.has(accountId)
 }
 
-export function setCloud(accountId: string, update: Partial<CloudState>) {
+export function setCloud(
+	accountId: string,
+	update: Partial<CloudState>,
+	collections?: Collection[],
+) {
 	const state = useCollectionStore.getState()
 	if (!state._hasHydrated || currentAccountId() !== accountId)
 		throw new Error('Reopen settings for the current account.')
 	state.updateSettings({
+		...(collections
+			? { accounts: { ...state.accounts, [accountId]: collections } }
+			: {}),
 		cloud: {
 			...state.cloud,
 			[accountId]: { ...cloudState(accountId), ...update },
@@ -63,19 +70,20 @@ export function setCloud(accountId: string, update: Partial<CloudState>) {
 export async function setEnabled(accountId: string, enabled: boolean) {
 	if (enabled && !cloudState(accountId).server)
 		throw new Error(
-			'Set your sync server in Advanced before enabling Cloud Sync.',
+			'Save your sync server under Advanced before enabling Cloud Sync.',
 		)
 	if (!enabled) controller?.abort()
 	const state = useCollectionStore.getState()
 	const collections = normalize(state.accounts[accountId] ?? [])
 	const cloud = cloudState(accountId)
-	state.updateSettings({
-		accounts: { ...state.accounts, [accountId]: collections },
-	})
-	setCloud(accountId, {
-		enabled,
-		replica: queue(cloud.replica, toRecords(collections)),
-	})
+	setCloud(
+		accountId,
+		{
+			enabled,
+			replica: queue(cloud.replica, toRecords(collections)),
+		},
+		collections,
+	)
 	await flushCollections()
 	if (enabled) schedule()
 }
@@ -270,21 +278,11 @@ export async function syncNow(accountId: string) {
 			write: async update => {
 				if (!active()) throw new Error('Sync cancelled.')
 				const replica = update(cloudState(accountId).replica)
-				const state = useCollectionStore.getState()
-				state.updateSettings({
-					cloud: {
-						...state.cloud,
-						[accountId]: { ...cloudState(accountId), replica },
-					},
-					...(!replica.conflicts.length
-						? {
-								accounts: {
-									...state.accounts,
-									[accountId]: fromRecords(visible(replica)),
-								},
-							}
-						: {}),
-				})
+				setCloud(
+					accountId,
+					{ replica },
+					replica.conflicts.length ? undefined : fromRecords(visible(replica)),
+				)
 				await flushCollections()
 			},
 			call: (path, options) =>
@@ -418,14 +416,14 @@ export async function resolveConflicts(accountId: string, keepLocal: boolean) {
 	const desired = keepLocal
 		? importBackup(remote, local, 'merge', newId)
 		: remote
-	const state = useCollectionStore.getState()
-	state.updateSettings({
-		accounts: { ...state.accounts, [accountId]: fromRecords(desired) },
-	})
-	setCloud(accountId, {
-		replica: queue(replica, desired),
-		status: 'Conflict resolved. Choose Sync Now.',
-	})
+	setCloud(
+		accountId,
+		{
+			replica: queue(replica, desired),
+			status: 'Conflict resolved. Choose Sync Now.',
+		},
+		fromRecords(desired),
+	)
 	await flushCollections()
 }
 
