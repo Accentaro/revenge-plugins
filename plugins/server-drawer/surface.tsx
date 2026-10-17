@@ -1,5 +1,7 @@
 /** @jsxImportSource . */
 import { getAssetIdByName } from '@revenge-mod/assets'
+import SearchInput from '@revenge-mod/components/SearchInput'
+import { Design } from '@revenge-mod/discord/design'
 import { ReactNativeSafeAreaContext } from '@revenge-mod/externals/react-native-safe-area-context'
 import { FlashList as Shopify } from '@revenge-mod/externals/shopify'
 import { lookupModule } from '@revenge-mod/modules/finders'
@@ -40,6 +42,14 @@ import {
 import type * as t from './types'
 
 export const DOCK_REST_OFFSET = 6
+const VIEW_OPTIONS = [
+	['servers', 'Servers'],
+	['dms', 'Direct Messages'],
+] as const
+const FILTER_OPTIONS = [
+	['all', 'All'],
+	['unread', 'Unreads'],
+] as const
 
 export function createServerDrawer(
 	jsonStorage: JsonStorage<t.ServerDrawerPreferences>,
@@ -132,7 +142,7 @@ export function createServerDrawer(
 		},
 		gridItem: { alignItems: 'center', minHeight: 82, width: ITEM_WIDTH },
 		selectionRing: { ...CENTER, borderWidth: 3, height: 62, width: 62 },
-		gridLabel: { fontSize: 11, marginTop: 4, textAlign: 'center', width: 68 },
+		gridLabel: { marginTop: 4, textAlign: 'center', width: 68 },
 		previewFrame: {
 			alignItems: 'center',
 			backgroundColor: semanticColors.BACKGROUND_SECONDARY_ALT,
@@ -165,11 +175,6 @@ export function createServerDrawer(
 			borderBottomWidth: 1,
 			borderColor: semanticColors.TEXT_BRAND,
 		},
-		folderTitle: {
-			color: semanticColors.TEXT_DEFAULT,
-			fontSize: 20,
-			fontWeight: '700',
-		},
 		dmButton: {
 			...CENTER,
 			backgroundColor: semanticColors.BACKGROUND_SECONDARY_ALT,
@@ -187,42 +192,8 @@ export function createServerDrawer(
 			paddingHorizontal: DOCK_PADDING / 2,
 		},
 		emptyContainer: { ...CENTER, minHeight: 180, padding: 24 },
-		emptyText: {
-			color: semanticColors.TEXT_DEFAULT,
-			fontSize: 17,
-			fontWeight: '600',
-			textAlign: 'center',
-		},
 		header: { ...ROW, minHeight: 50, paddingHorizontal: 12 },
-		viewTabs: {
-			backgroundColor: semanticColors.BACKGROUND_BASE_LOWER,
-			borderRadius: 10,
-			flex: 1,
-			flexDirection: 'row',
-			padding: 3,
-		},
-		viewTab: {
-			...CENTER,
-			borderRadius: 8,
-			flex: 1,
-			minHeight: 36,
-			paddingHorizontal: 5,
-		},
 		searchRow: { gap: 10, paddingHorizontal: 14, paddingVertical: 10 },
-		searchInput: {
-			backgroundColor: semanticColors.BACKGROUND_BASE_LOWER,
-			color: semanticColors.TEXT_DEFAULT,
-			minHeight: 42,
-			paddingHorizontal: 12,
-			borderRadius: 8,
-		},
-		filterTabs: {
-			backgroundColor: semanticColors.BACKGROUND_BASE_LOWER,
-			borderRadius: 9,
-			flexDirection: 'row',
-			padding: 3,
-		},
-		filterTab: { ...CENTER, borderRadius: 7, flex: 1, minHeight: 36 },
 		handle: { ...CENTER, height: 16, width: '100%' },
 		handleBar: {
 			backgroundColor: semanticColors.TEXT_MUTED,
@@ -1238,20 +1209,20 @@ export function createServerDrawer(
 							{artwork}
 						</View>
 					)}
-					<Text
+					<Design.Text
 						ellipsizeMode={list ? undefined : 'tail'}
 						numberOfLines={1}
+						variant={`${list ? 'text-md' : 'text-xs'}/${selected || previewWidth ? 'bold' : 'medium'}`}
 						style={[
-							list ? { flex: 1, fontSize: 16 } : styles.gridLabel,
+							list ? { flex: 1 } : styles.gridLabel,
 							{
 								color: selected ? brand : foreground,
-								fontWeight: selected || previewWidth ? '700' : '500',
 							},
 							previewWidth && !list ? { width: 60 } : undefined,
 						]}
 					>
 						{label}
-					</Text>
+					</Design.Text>
 					{!previewWidth && list && folder ? (
 						<Icon name="ChevronSmallRightIcon" color={muted} size={22} />
 					) : null}
@@ -1348,9 +1319,9 @@ export function createServerDrawer(
 					onPress={() => setEditing('editing')}
 					style={style}
 				>
-					<Text numberOfLines={1} style={styles.folderTitle}>
+					<Design.Text numberOfLines={1} variant="heading-lg/bold">
 						{folder.name || 'Folder'}
-					</Text>
+					</Design.Text>
 				</Pressable>
 			)
 		}
@@ -1361,42 +1332,29 @@ export function createServerDrawer(
 			onChange,
 			filter = false,
 		}: t.TabsProps<Value>) {
-			const styles = useStyles()
-			const background: string = useToken(
-				semanticColors.BACKGROUND_SECONDARY_ALT,
+			const items = useMemo(
+				() => options.map(([id, label]) => ({ id, label })),
+				[options],
 			)
-			const foreground: string = useToken(semanticColors.TEXT_DEFAULT)
-			const muted: string = useToken(semanticColors.TEXT_MUTED)
-
+			const index = items.findIndex(item => item.id === value)
+			const state = Design.useSegmentedControlState({
+				items,
+				pageWidth: 0,
+				defaultIndex: index,
+				onSetActiveIndex: next => {
+					if (items[next].id !== value) onChange(items[next].id)
+				},
+			})
+			useEffect(() => {
+				state.setActiveIndex(index, false, true)
+			}, [index])
 			return (
-				<View
-					accessibilityRole="tablist"
-					style={filter ? styles.filterTabs : styles.viewTabs}
-				>
-					{options.map(([id, label, accessibilityLabel = label]) => (
-						<Pressable
-							key={id}
-							accessibilityLabel={accessibilityLabel}
-							accessibilityRole="tab"
-							accessibilityState={{ selected: value === id }}
-							onPress={() => onChange(id)}
-							style={[
-								filter ? styles.filterTab : styles.viewTab,
-								{ backgroundColor: value === id ? background : 'transparent' },
-							]}
-						>
-							<Text
-								numberOfLines={filter ? undefined : 1}
-								style={{
-									color: value === id ? foreground : muted,
-									fontSize: filter ? 14 : 13,
-									fontWeight: value === id ? '700' : '500',
-								}}
-							>
-								{label}
-							</Text>
-						</Pressable>
-					))}
+				<View style={filter ? undefined : { flex: 1 }}>
+					{filter ? (
+						<Design.SegmentedControl state={state} />
+					) : (
+						<Design.Tabs state={state} />
+					)}
 				</View>
 			)
 		}
@@ -2087,23 +2045,17 @@ export function createServerDrawer(
 						}
 					>
 						<View style={styles.searchRow}>
-							<TextInput
-								accessibilityLabel={`Search ${viewLabel}`}
+							<SearchInput
 								placeholder={`Search ${viewLabel}`}
-								placeholderTextColor={TEXT_MUTED}
 								value={query}
-								onChangeText={value => setUi({ query: value })}
+								onChange={value => setUi({ query: value })}
 								returnKeyType="search"
-								style={styles.searchInput}
 							/>
 							<Tabs<'all' | 'unread'>
 								filter
 								value={filter}
 								onChange={value => setUi({ filter: value })}
-								options={[
-									['all', 'All', `All ${viewLabel}`],
-									['unread', 'Unreads', `Unread ${viewLabel}`],
-								]}
+								options={FILTER_OPTIONS}
 							/>
 						</View>
 						<View style={{ flex: 1 }}>
@@ -2138,13 +2090,16 @@ export function createServerDrawer(
 											numColumns={columns}
 											ListEmptyComponent={
 												<View style={styles.emptyContainer}>
-													<Text style={styles.emptyText}>
+													<Design.Text
+														variant="text-md/semibold"
+														style={{ textAlign: 'center' }}
+													>
 														{query.trim()
 															? `No ${viewLabel} match your search`
 															: filter === 'unread'
 																? "You're all caught up"
 																: `No ${viewLabel} to show`}
-													</Text>
+													</Design.Text>
 												</View>
 											}
 											contentContainerStyle={{
@@ -2396,10 +2351,7 @@ export function createServerDrawer(
 													</Fragment>
 												) : (
 													<Tabs
-														options={[
-															['servers', 'Servers'],
-															['dms', 'Direct Messages'],
-														]}
+														options={VIEW_OPTIONS}
 														value={view}
 														onChange={changeView}
 													/>

@@ -35,6 +35,10 @@ By **Benjii**
 Introduces a favorites and settings button to the you bar.
 by **Joamonca, Benjii**
 
+### GIF to Chat Input
+Places GIF picker selections in the chat input instead of sending them immediately.
+By **j, Benjii**.
+
 ## licenses
 Rain-derived plugin code retains [MPL-2.0](LICENSE.rain). The Revenge Next runtime and template code retain [GPL-3.0](LICENSE). Quoter includes gifenc by Matt DesLauriers under its embedded MIT license.
 

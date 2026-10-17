@@ -168,7 +168,7 @@ export interface DragTargetProps {
 }
 
 export interface TabsProps<Value extends string> {
-	options: readonly (readonly [Value, string, string?])[]
+	options: readonly (readonly [Value, string])[]
 	value: Value
 	filter?: boolean
 	onChange(value: Value): void
