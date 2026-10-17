@@ -136,8 +136,6 @@ export interface ReadActions {
 
 export type PanelElement = ReactElement<Record<string, unknown>>
 
-export type PanelComponent = (props: PanelElement['props']) => NativePanel
-
 export interface ServerDrawerSurfaceProps {
 	bottomInset: number
 	onWidthChange(width: number): void

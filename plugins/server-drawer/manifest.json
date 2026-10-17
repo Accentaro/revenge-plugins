@@ -5,7 +5,7 @@
 	"description": "A compact server dock with a searchable server and DM drawer, folders, and drag and drop.",
 	"author": "kmmiio99o, Rosie and Benjii <879393496627306587> <1356936317501571214> <463702169443368970>",
 	"icon": "ServersIcon",
-	"version": "1.0.3",
+	"version": "1.0.4",
 	"dependencies": {
 		"revenge.api": {
 			"version": ">=1 <2"

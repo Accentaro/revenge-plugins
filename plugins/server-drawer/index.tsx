@@ -14,15 +14,7 @@ import SettingsComponent, { DefaultSettings } from './settings'
 import { createServerDrawer, DOCK_REST_OFFSET } from './surface'
 import type * as t from './types'
 
-type TabsComponent = (props: Record<string, unknown>) => React.ReactElement<{
-	children: React.ReactElement<Record<string, unknown>, t.PanelComponent>
-}>
-type NativeTabs = React.MemoExoticComponent<TabsComponent> & {
-	compare?: (
-		previous: Record<string, unknown>,
-		next: Record<string, unknown>,
-	) => boolean
-}
+type NativeComponent = (props: Record<string, unknown>) => React.ReactNode
 
 let reportError: (error: unknown) => void
 
@@ -47,16 +39,21 @@ export default plugin<{ jsonStorage: t.ServerDrawerPreferences }>({
 		cleanup(
 			getModuleWithImportedPath<{
 				default: {
-					type: (props: Record<string, unknown>) => React.ReactElement<{
-						children: React.ReactElement<Record<string, unknown>, NativeTabs>
-					}>
+					type: NativeComponent
 				}
 			}>('components_native/MainChannels.tsx', module => {
 				if (abort.signal.aborted) return
 				let Panel: React.ComponentType<{ element: t.NativePanel }> | undefined
 				let failed = false
-				const initialize = (element: t.NativePanel) => {
+				const initialize = (element: React.ReactNode) => {
 					if (failed || abort.signal.aborted) return element
+					if (!isNativePanel(element)) {
+						failed = true
+						plugin.reportError(
+							new Error('Server Drawer: unsupported left-panel content.'),
+						)
+						return element
+					}
 					if (Panel) return <Panel key={element.key} element={element} />
 					try {
 						const [inset] = lookupModule(
@@ -159,44 +156,82 @@ export default plugin<{ jsonStorage: t.ServerDrawerPreferences }>({
 						return element
 					}
 				}
-				let Tabs: React.ComponentType<Record<string, unknown>> | undefined
-				cleanup(
-					after(module.default, 'type', element => {
-						const tabs = element.props.children
-						if (!Tabs) {
-							const originalTabs = tabs.type.type
-							let originalPanel: t.PanelComponent
-							function LeftPanel(props: Record<string, unknown>) {
-								const rendered = originalPanel(props)
-								const [ready, setReady] = React.useState(false)
-								// The You bar initializes its shade during the first child render.
-								React.useEffect(() => {
-									setReady(true)
-								}, [])
-								return ready ? initialize(rendered) : rendered
-							}
-							// Both private components own hooks. Keep calling them while mounted after disable.
-							Tabs = React.memo(function DrawerTabs(
-								props: Record<string, unknown>,
-							) {
-								const rendered = originalTabs(props) as React.ReactElement<{
-									children: React.ReactElement<
-										Record<string, unknown>,
-										t.PanelComponent
-									>
-								}>
-								const child = rendered.props.children
-								originalPanel = child.type
-								return React.cloneElement(rendered, {
-									children: <LeftPanel key={child.key} {...child.props} />,
+				const wrappers = new Map<
+					React.ReactElement['type'],
+					React.ElementType
+				>()
+				const wrapPanel = (node: React.ReactNode): React.ReactNode => {
+					if (Array.isArray(node)) {
+						const children = node.map(wrapPanel)
+						return children.every((child, index) => child === node[index])
+							? node
+							: children
+					}
+					if (!React.isValidElement<{ children?: React.ReactNode }>(node))
+						return node
+					const type = node.type
+					const memo =
+						typeof type === 'object' && type !== null && 'type' in type
+							? (type as React.MemoExoticComponent<NativeComponent> & {
+									compare?: (
+										a: Record<string, unknown>,
+										b: Record<string, unknown>,
+									) => boolean
 								})
-							}, tabs.type.compare)
+							: undefined
+					const original = memo?.type ?? type
+					// The bottom drawer replaces the native horizontal home-drawer gesture.
+					if (
+						typeof original === 'function' &&
+						original.name === 'NonCollapsableGestureDetector'
+					)
+						return wrapPanel(node.props.children)
+					if (
+						typeof original === 'function' &&
+						(original.name === 'LeftMenuTabsInner' ||
+							original.name === 'LeftPanelHomeDrawerContainer' ||
+							original.name === 'LeftPanelContent')
+					) {
+						let Wrapper = wrappers.get(type)
+						if (!Wrapper) {
+							const render = original as NativeComponent
+							// Keep each native component's hooks and identity stable across renders and disable.
+							const Component =
+								original.name === 'LeftPanelContent'
+									? function ServerDrawerLeftPanelContent(
+											props: Record<string, unknown>,
+										) {
+											const active = useActive()
+											const rendered = render(
+												active && 'panelStyles' in props
+													? { ...props, panelStyles: undefined }
+													: props,
+											)
+											const [ready, setReady] = React.useState(false)
+											// The You bar initializes its shade during the first child render.
+											React.useEffect(() => {
+												setReady(true)
+											}, [])
+											return ready ? initialize(rendered) : rendered
+										}
+									: function ServerDrawerPanelContainer(
+											props: Record<string, unknown>,
+										) {
+											const active = useActive()
+											const rendered = render(props)
+											return active ? wrapPanel(rendered) : rendered
+										}
+							Wrapper = memo ? React.memo(Component, memo.compare) : Component
+							wrappers.set(type, Wrapper)
 						}
-						return React.cloneElement(element, {
-							children: <Tabs key={tabs.key} {...tabs.props} />,
-						})
-					}),
-				)
+						return <Wrapper key={node.key} {...node.props} />
+					}
+					const children = wrapPanel(node.props.children)
+					return children === node.props.children
+						? node
+						: React.cloneElement(node, { children })
+				}
+				cleanup(after(module.default, 'type', wrapPanel))
 			}),
 		)
 	},
@@ -249,4 +284,13 @@ export function transformLeftPanelContent(
 			dock,
 		],
 	})
+}
+
+function isNativePanel(element: React.ReactNode): element is t.NativePanel {
+	return (
+		React.isValidElement<{ children?: React.ReactNode }>(element) &&
+		Array.isArray(element.props.children) &&
+		element.props.children.length === 2 &&
+		React.isValidElement(element.props.children[1])
+	)
 }
