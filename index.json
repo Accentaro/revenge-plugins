@@ -100,7 +100,7 @@
       "author": "Benjii <463702169443368970>",
       "icon": "FolderIcon",
       "channels": {
-        "latest": "1.0.6"
+        "latest": "1.0.7"
       },
       "versions": {
         "1.0.2": {
@@ -159,6 +159,19 @@
           "url": "https://accentaro.github.io/revenge-plugins/pool/revenge-next.gif-collections@1.0.6.zip",
           "sha256": "3df6ebcd7749e54ab852a757623a97e2751e653f0ff4ce2ae4eb8093c1a831ec",
           "size": 37808,
+          "dependencies": {
+            "revenge.api": {
+              "version": ">=1.1.0 <2"
+            },
+            "discord": {
+              "version": "*"
+            }
+          }
+        },
+        "1.0.7": {
+          "url": "https://accentaro.github.io/revenge-plugins/pool/revenge-next.gif-collections@1.0.7.zip",
+          "sha256": "fce3937b9d9b0dc8554c3579d57ef00dfa4df36ccf128e1389c8bf1bba459ec7",
+          "size": 38206,
           "dependencies": {
             "revenge.api": {
               "version": ">=1.1.0 <2"
