@@ -95,6 +95,7 @@ export interface MainCategoriesProps {
 	favoritesCategory: CategoryProps['item']
 	collectionUI?: {
 		accountId: string
+		collections: Collection[]
 		columnWidth: number
 		select(id: string): void
 		category: ComponentType<CategoryProps>

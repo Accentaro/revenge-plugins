@@ -1,10 +1,11 @@
 import { Stores } from '@revenge-mod/discord/flux'
 import { lookupModule } from '@revenge-mod/modules/finders'
 import { withProps } from '@revenge-mod/modules/finders/filters'
-import { useSyncExternalStore } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import { normalize, toRecords } from './metadata'
 import { currentAccountId } from './native'
 import { flushCollections, persistCollections } from './persistence'
+import { refreshCollectionPreviews } from './previews'
 import { queue } from './sync/replica'
 import type { JsonStorage } from '@revenge-mod/json-storage'
 import type { Collection, CollectionStorage, Gif } from './types'
@@ -134,6 +135,30 @@ export function useCollections(accountId: string) {
 	return useCollectionStore(
 		state => state.accounts[accountId] ?? emptyCollections,
 	)
+}
+
+export function useCollectionPreviews(accountId: string) {
+	const collections = useCollections(accountId)
+	const enabled = useCollectionsEnabled()
+	const [resolved, setResolved] = useState<{
+		source: Collection[]
+		value: Collection[]
+	}>()
+	useEffect(() => {
+		if (!enabled || !collections.length) return
+		const abort = new AbortController()
+		refreshCollectionPreviews(collections, abort.signal).then(
+			value => {
+				if (!abort.signal.aborted) setResolved({ source: collections, value })
+			},
+			error => {
+				if (!abort.signal.aborted) reportError(error)
+			},
+		)
+		return () => abort.abort()
+	}, [collections, enabled])
+	// Signed preview URLs expire independently of saved GIF identities and send URLs.
+	return resolved?.source === collections ? resolved.value : collections
 }
 
 export function updateCollections(

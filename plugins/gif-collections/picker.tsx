@@ -17,8 +17,8 @@ import {
 	collectionSources,
 	reorderCollection,
 	useAccountId,
+	useCollectionPreviews,
 	useCollectionStore,
-	useCollections,
 	useCollectionsEnabled,
 } from './storage'
 import type {
@@ -85,7 +85,7 @@ export function MainCategories({
 }) {
 	const enabled = useCollectionsEnabled()
 	const ui = page.collectionUI!
-	const collections = useCollections(ui.accountId)
+	const collections = ui.collections
 	const onlyCollections = useCollectionStore(state => state.onlyShowCollections)
 	const nativeCategories = useMemo(() => {
 		const categories: CategoryProps['item'][] = []
@@ -171,7 +171,7 @@ export function PickerFrame({
 }: PickerFrameProps) {
 	const enabled = useCollectionsEnabled()
 	const accountId = useAccountId()
-	const collections = useCollections(accountId ?? '')
+	const collections = useCollectionPreviews(accountId ?? '')
 	const [selected, setSelected] = useState<{
 		accountId: string
 		id: string
@@ -278,6 +278,7 @@ export function PickerFrame({
 			return cloneElement(categories, {
 				collectionUI: {
 					accountId,
+					collections,
 					columnWidth: header.columnWidth,
 					select: id => {
 						setSelected({ accountId, id, columns: categories.props.columns })
