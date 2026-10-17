@@ -3,19 +3,62 @@
   "name": "Plugins for revenge-next",
   "description": "My own variations of plugins, tweaked to my personal liking.",
   "plugins": {
+    "accentaro.gif-to-chat-input": {
+      "name": "GIF to Chat Input",
+      "description": "Prevents GIFs from auto-sending from the picker and holds them in the chatbox.",
+      "author": "j <1356632712861192242>",
+      "contributors": [
+        "Benjii <463702169443368970>"
+      ],
+      "icon": "GifIcon",
+      "channels": {
+        "latest": "1.0.0"
+      },
+      "versions": {
+        "1.0.0": {
+          "url": "https://accentaro.github.io/revenge-plugins/pool/accentaro.gif-to-chat-input@1.0.0.zip",
+          "sha256": "42b2a25fbaf6c2aecfb7eb5a728e109f22bec0240a51545f2e4cf54179749f0a",
+          "size": 17613,
+          "dependencies": {
+            "revenge.api": {
+              "version": ">=1 <2"
+            },
+            "discord": {
+              "version": "*"
+            }
+          }
+        }
+      }
+    },
     "revenge-next.better-you-bar": {
       "name": "BetterYouBar",
-      "description": "Adds Favorites and Settings shortcuts to the You bar. Based on Rain's BetterYouBar.",
+      "description": "Adds Favorites and Settings shortcuts to the You bar.",
       "author": "j <1356632712861192242>",
+      "contributors": [
+        "Benjii <463702169443368970>"
+      ],
       "icon": "StarIcon",
       "channels": {
-        "latest": "1.0.4"
+        "latest": "1.0.5"
       },
       "versions": {
         "1.0.4": {
           "url": "https://accentaro.github.io/revenge-plugins/pool/revenge-next.better-you-bar@1.0.4.zip",
           "sha256": "ffae31c9a81bdc54dea2481ab0d07ec3f18776a1db4dac2fa68aa761a947fc37",
           "size": 18011,
+          "dependencies": {
+            "revenge.api": {
+              "version": ">=1 <2"
+            },
+            "discord": {
+              "version": "*"
+            }
+          }
+        },
+        "1.0.5": {
+          "url": "https://accentaro.github.io/revenge-plugins/pool/revenge-next.better-you-bar@1.0.5.zip",
+          "sha256": "b161b4eb91fc515413cfcf8d8dc80f641c795e37491c01e656f9b2709d32442a",
+          "size": 17953,
           "dependencies": {
             "revenge.api": {
               "version": ">=1 <2"
@@ -210,7 +253,7 @@
       "author": "kmmiio99o, Rosie and Benjii <879393496627306587> <1356936317501571214> <463702169443368970>",
       "icon": "ServersIcon",
       "channels": {
-        "latest": "1.0.2"
+        "latest": "1.0.3"
       },
       "versions": {
         "1.0.0": {
@@ -243,6 +286,19 @@
           "url": "https://accentaro.github.io/revenge-plugins/pool/revenge-next.server-drawer@1.0.2.zip",
           "sha256": "8e111c48787a88298609eb426d758122f8bfb6ddad29b9ef31d19c0f6ccba706",
           "size": 32772,
+          "dependencies": {
+            "revenge.api": {
+              "version": ">=1 <2"
+            },
+            "discord": {
+              "version": "*"
+            }
+          }
+        },
+        "1.0.3": {
+          "url": "https://accentaro.github.io/revenge-plugins/pool/revenge-next.server-drawer@1.0.3.zip",
+          "sha256": "a1a16108a1157ae8df669f83eea3e96c7e812a19b64d594baa50e8f2eb65e359",
+          "size": 32729,
           "dependencies": {
             "revenge.api": {
               "version": ">=1 <2"
