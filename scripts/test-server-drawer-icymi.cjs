@@ -9,8 +9,7 @@ const code = swc.transformSync(source, {
 	module: { type: 'commonjs' },
 }).code
 let definition
-let receiveModule
-let subscribed = false
+const subscriptions = new Map()
 let reloads = 0
 let originalCalls = 0
 const cleanups = []
@@ -20,14 +19,20 @@ const gates = {
 }
 const originalGet = gates.getICYMIEnabled
 const originalUse = gates.useICYMIEnabled
+const homeConfig = Object.freeze({ enableHome: true, landOnHome: true, enablePeekHint: true, unrelated: 'preserved' })
+let homeCalls = 0
+const home = {
+	getConfig() { homeCalls++; return homeConfig },
+	useConfig() { homeCalls++; return homeConfig },
+}
+const originalHomeGet = home.getConfig
+const originalHomeUse = home.useConfig
 const imports = {
 	'@revenge-mod/discord/actions': {},
 	'@revenge-mod/discord/utils/modules/finders': { getModuleWithImportedPath: () => () => {} },
 	'@revenge-mod/modules/finders': { getModules: (filter, callback) => {
-		assert.deepEqual(filter, ['getICYMIEnabled', 'useICYMIEnabled'])
-		subscribed = true
-		receiveModule = callback
-		return () => { subscribed = false }
+		subscriptions.set(filter[0], callback)
+		return () => { subscriptions.delete(filter[0]) }
 	} },
 	'@revenge-mod/modules/finders/filters': { withProps: (...keys) => keys },
 	'@revenge-mod/patcher': { after: (target, key, callback) => {
@@ -45,20 +50,34 @@ vm.runInNewContext(code, {
 const api = { cleanup: callback => cleanups.push(callback), plugin: { startedLate: true, requireReload: () => reloads++, reportError() {} } }
 definition.start(api)
 assert.equal(reloads, 1)
-assert.equal(subscribed, false)
+assert.equal(subscriptions.size, 0)
 assert.equal(cleanups.length, 0)
 api.plugin.startedLate = false
 definition.start(api)
-assert.equal(subscribed, true)
-receiveModule(gates)
+assert.equal(subscriptions.size, 2)
+subscriptions.get('getICYMIEnabled')(gates)
+subscriptions.get('MobileHomeDrawerExperiment')({ MobileHomeDrawerExperiment: home })
 assert.equal(gates.getICYMIEnabled(), false)
 assert.equal(gates.useICYMIEnabled(), false)
 assert.equal(originalCalls, 2)
+for (const key of ['getConfig', 'useConfig']) {
+	const config = home[key]()
+	assert.equal(config.enableHome, false)
+	assert.equal(config.landOnHome, false)
+	assert.equal(config.enablePeekHint, false)
+	assert.equal(config.unrelated, 'preserved')
+	assert.notEqual(config, homeConfig)
+}
+assert.equal(homeCalls, 2)
+assert.equal(homeConfig.enableHome, true)
 definition.stop(api)
 assert.equal(reloads, 2)
 for (const cleanup of cleanups.reverse()) cleanup()
-assert.equal(subscribed, false)
+assert.equal(subscriptions.size, 0)
 assert.equal(gates.getICYMIEnabled, originalGet)
 assert.equal(gates.useICYMIEnabled, originalUse)
 assert.equal(gates.getICYMIEnabled(), true)
-console.log('PASS: ICYMI gates, original hook execution, late-start reload, stop reload and cleanup')
+assert.equal(home.getConfig, originalHomeGet)
+assert.equal(home.useConfig, originalHomeUse)
+assert.equal(home.getConfig(), homeConfig)
+console.log('PASS: ICYMI and Home Drawer gates, preserved config/hooks, reload requirements and cleanup')

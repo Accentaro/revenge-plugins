@@ -16,6 +16,12 @@ import type * as t from './types'
 
 type NativeComponent = (props: Record<string, unknown>) => React.ReactNode
 
+interface HomeDrawerConfig {
+	enableHome: boolean
+	landOnHome: boolean
+	enablePeekHint: boolean
+}
+
 let reportError: (error: unknown) => void
 
 export default plugin<{ jsonStorage: t.ServerDrawerPreferences }>({
@@ -42,6 +48,27 @@ export default plugin<{ jsonStorage: t.ServerDrawerPreferences }>({
 					// Keep native hooks running; override only the feature-gate result.
 					cleanup(after(module, 'getICYMIEnabled', () => false))
 					cleanup(after(module, 'useICYMIEnabled', () => false))
+				},
+			),
+		)
+		cleanup(
+			getModules(
+				withProps<{
+					MobileHomeDrawerExperiment: {
+						getConfig(): HomeDrawerConfig
+						useConfig(): HomeDrawerConfig
+					}
+				}>('MobileHomeDrawerExperiment'),
+				({ MobileHomeDrawerExperiment }) => {
+					for (const key of ['getConfig', 'useConfig'] as const)
+						cleanup(
+							after(MobileHomeDrawerExperiment, key, config => ({
+								...config,
+								enableHome: false,
+								landOnHome: false,
+								enablePeekHint: false,
+							})),
+						)
 				},
 			),
 		)
