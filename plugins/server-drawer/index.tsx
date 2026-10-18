@@ -4,7 +4,7 @@ import {
 	getModuleWithImportedPath,
 	lookupModuleWithImportedPath,
 } from '@revenge-mod/discord/utils/modules/finders'
-import { lookupModule } from '@revenge-mod/modules/finders'
+import { getModules, lookupModule } from '@revenge-mod/modules/finders'
 import { withProps } from '@revenge-mod/modules/finders/filters'
 import { after } from '@revenge-mod/patcher'
 import React from 'react'
@@ -21,11 +21,30 @@ let reportError: (error: unknown) => void
 export default plugin<{ jsonStorage: t.ServerDrawerPreferences }>({
 	jsonStorage: { load: true, default: DefaultSettings },
 	SettingsComponent,
+	stop({ plugin }) {
+		plugin.requireReload()
+	},
 	start({ cleanup, jsonStorage, plugin }) {
+		if (plugin.startedLate) {
+			plugin.requireReload()
+			return
+		}
 		reportError = error => plugin.reportError(error)
 		const abort = new AbortController()
 		cleanup(() => abort.abort())
-		if (plugin.startedLate) plugin.requireReload()
+		cleanup(
+			getModules(
+				withProps<{
+					getICYMIEnabled(): boolean
+					useICYMIEnabled(): boolean
+				}>('getICYMIEnabled', 'useICYMIEnabled'),
+				module => {
+					// Keep native hooks running; override only the feature-gate result.
+					cleanup(after(module, 'getICYMIEnabled', () => false))
+					cleanup(after(module, 'useICYMIEnabled', () => false))
+				},
+			),
+		)
 
 		const useActive = () =>
 			React.useSyncExternalStore(
