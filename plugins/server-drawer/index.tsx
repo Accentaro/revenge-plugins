@@ -6,7 +6,7 @@ import {
 } from '@revenge-mod/discord/utils/modules/finders'
 import { getModules, lookupModule } from '@revenge-mod/modules/finders'
 import { withProps } from '@revenge-mod/modules/finders/filters'
-import { after } from '@revenge-mod/patcher'
+import { after, before } from '@revenge-mod/patcher'
 import React from 'react'
 import * as Native from 'react-native'
 import { computeGuildDockSpecs } from './data'
@@ -192,6 +192,27 @@ export default plugin<{ jsonStorage: t.ServerDrawerPreferences }>({
 								chatLayout.getChatLayout().isChatBesideChannelList
 									? width
 									: width + constants.DM_WIDTH,
+							),
+						)
+						cleanup(
+							getModules(
+								withProps<{
+									ScreenAlignedThemedGradientSliding: unknown
+									default(props: {
+										offsetX?: number
+										offsetY?: number
+									}): React.ReactNode
+								}>('ScreenAlignedThemedGradientSliding'),
+								channelBackground => {
+									cleanup(
+										before(channelBackground, 'default', args => {
+											// The backdrop no longer starts after the hidden guild rail.
+											if (!chatLayout.getChatLayout().isChatBesideChannelList)
+												args[0] = { ...args[0], offsetX: 0 }
+											return args
+										}),
+									)
+								},
 							),
 						)
 						Panel = ServerDrawerLeftPanel
