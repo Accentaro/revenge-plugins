@@ -35,6 +35,9 @@ by **Joamonca, Benjii**
 Places GIF picker selections in the chat input instead of sending them immediately.
 By **j, Benjii**.
 
+### Better Badges
+Allows you to rearrange all badges, including globalbadges, and hide any badge.
+
 ## licenses
 Rain-derived plugin code retains [MPL-2.0](LICENSE.rain). The Revenge Next runtime and template code retain [GPL-3.0](LICENSE). Quoter includes gifenc by Matt DesLauriers under its embedded MIT license.
 
