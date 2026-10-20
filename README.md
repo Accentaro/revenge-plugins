@@ -2,6 +2,8 @@
 These plugins have been created before in other various projects, i am not the creator, simply a contributor/maintainer.
 These are my own variations. tweaked to my own personal liking.
 
+I will PR to community repo when i'm happy with them and find no more bugs etc.
+
 ## How to install
 Copy the repository URL below into **Settings > Plugins > Advanced > Add repository**. Open **Browse Plugins**, install the plugin, enable it, and restart Discord.
 
