@@ -1,11 +1,10 @@
 /** @jsxImportSource . */
-import { getAssetIdByName } from '@revenge-mod/assets'
 import { ActionSheetActionCreators } from '@revenge-mod/discord/actions'
 import { getModules } from '@revenge-mod/modules/finders'
 import { withName } from '@revenge-mod/modules/finders/filters'
 import { instead } from '@revenge-mod/patcher'
+import { lookupGeneratedIconComponent } from '@revenge-mod/utils/discord'
 import { Children, cloneElement, isValidElement } from 'react'
-import { Image } from 'react-native'
 import { getQuoteMedia } from './lib/content'
 import { closeQuoteModal, openQuoteModal } from './preview'
 import Settings from './settings'
@@ -16,6 +15,7 @@ import {
 	quoterSettings,
 	setActive,
 } from './storage'
+import type { DiscordModules } from '@revenge-mod/discord/types'
 import type { ComponentType, ReactNode } from 'react'
 import type { QuoteMessage, QuoterSettings, TreeProps } from './types'
 
@@ -80,19 +80,11 @@ export default plugin<{ jsonStorage: QuoterSettings }>({
 										const icon = isValidElement(template.props.icon)
 											? cloneElement(
 													template.props.icon as React.ReactElement<{
-														IconComponent: ComponentType<{ color: string }>
+														IconComponent: DiscordModules.Components.BaseIconImage
 													}>,
 													{
-														IconComponent: ({ color }) => (
-															<Image
-																source={getAssetIdByName('QuoteIcon')}
-																style={{
-																	width: 24,
-																	height: 24,
-																	tintColor: color,
-																}}
-															/>
-														),
+														IconComponent:
+															lookupGeneratedIconComponent('QuoteIcon')!,
 													},
 												)
 											: undefined
