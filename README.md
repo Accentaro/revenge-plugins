@@ -17,6 +17,10 @@ This repo is only for `revenge next`, and will not work for other clients.
 A compact server dock with a searchable server and DM drawer, grid/list layouts, folders, drag and drop, unread indicators, native gestures, mark as read.
 By **kmmiio99o, Rosie, and Benjii**.
 
+### Declutter
+Hide profile cosmetics, server tags, badges, server boost goals, DM activity cards and payment settings, with optional channel name emoji removal.
+By **kmmiio99o, Benjii**.
+
 ### GIF Collections
 Organise GIFs into collections, import and export JSON backups, and optionally sync using your own server endpoint.
 By **Benjii**

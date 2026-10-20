@@ -1,0 +1,17 @@
+{
+	"format": 1,
+	"id": "dev.benjii.declutter",
+	"name": "Declutter",
+	"description": "Hide profile clutter: avatar decorations, nameplates, profile effects, profile frames, server tags, and badges. Aswell as Nitro/Payment settings.",
+	"author": "Benjii <463702169443368970>",
+	"contributors": ["kmmiio99o"],
+	"icon": "MagicWandIcon",
+	"version": "1.2.0",
+	"dependencies": {
+		"revenge.api": { "version": ">=1" },
+		"discord": { "version": "*" }
+	},
+	"dist": {
+		"script": "index.js"
+	}
+}

@@ -73,6 +73,34 @@ export default plugin<{ jsonStorage: t.ServerDrawerPreferences }>({
 			),
 		)
 
+		// Patch before Discord caches the hook's default import during its first render.
+		cleanup(
+			getModuleWithImportedPath<{ default: () => number }>(
+				'modules/channel_list_v2/native/useChannelListWidth.tsx',
+				channelWidth => {
+					const [chatLayout] = lookupModule(
+						withProps<{
+							getChatLayout(): { isChatBesideChannelList: boolean }
+						}>('getChatLayout'),
+					)
+					const [constants] = lookupModule(
+						withProps<{ DM_WIDTH: number }>('DM_WIDTH'),
+					)
+					if (!chatLayout || !constants) {
+						plugin.reportError('Unsupported channel list layout.')
+						return
+					}
+					cleanup(
+						after(channelWidth, 'default', width =>
+							chatLayout.getChatLayout().isChatBesideChannelList
+								? width
+								: width + constants.DM_WIDTH,
+						),
+					)
+				},
+			),
+		)
+
 		const useActive = () =>
 			React.useSyncExternalStore(
 				listener => {
@@ -110,23 +138,15 @@ export default plugin<{ jsonStorage: t.ServerDrawerPreferences }>({
 						const [shade] = lookupModuleWithImportedPath<{
 							default: { type: () => t.PanelElement }
 						}>('modules/main_tabs_v2/native/you_bar/YouBarFloatingShade.tsx')
-						const [channelWidth] = lookupModuleWithImportedPath<{
-							default: () => number
-						}>('modules/channel_list_v2/native/useChannelListWidth.tsx')
 						const [chatLayout] = lookupModule(
 							withProps<{
 								getChatLayout(): { isChatBesideChannelList: boolean }
 							}>('getChatLayout'),
 						)
-						const [constants] = lookupModule(
-							withProps<{ DM_WIDTH: number }>('DM_WIDTH'),
-						)
 						if (
 							!inset ||
 							typeof shade?.default?.type !== 'function' ||
-							typeof channelWidth?.default !== 'function' ||
 							!chatLayout ||
-							!constants ||
 							typeof module.default?.type !== 'function'
 						) {
 							throw new Error(
@@ -186,13 +206,6 @@ export default plugin<{ jsonStorage: t.ServerDrawerPreferences }>({
 							after(shade.default, 'type', element => (
 								<YouBarBackdrop element={element} />
 							)),
-						)
-						cleanup(
-							after(channelWidth, 'default', width =>
-								chatLayout.getChatLayout().isChatBesideChannelList
-									? width
-									: width + constants.DM_WIDTH,
-							),
 						)
 						cleanup(
 							getModules(
