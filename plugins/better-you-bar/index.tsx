@@ -56,7 +56,11 @@ export default plugin({
 										size="sm"
 										variant={variant}
 										icon={
-											<StarIcon size="xs" style={{ width: 18, height: 18 }} />
+											<StarIcon
+												size="xs"
+												color={args[0].hasNameplate ? 'white' : undefined}
+												style={{ width: 18, height: 18 }}
+											/>
 										}
 										accessibilityLabel="Favorites"
 										onPress={() => guilds.transitionToGuild('@favorites')}
@@ -67,6 +71,7 @@ export default plugin({
 										variant={variant}
 										icon={
 											<SettingsIcon
+												color={args[0].hasNameplate ? 'white' : undefined}
 												size="xs"
 												style={{ width: 18, height: 18 }}
 											/>
