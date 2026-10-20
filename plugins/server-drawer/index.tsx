@@ -73,7 +73,7 @@ export default plugin<{ jsonStorage: t.ServerDrawerPreferences }>({
 			),
 		)
 
-		// Patch before Discord caches the hook's default import during its first render.
+		// Patch width and backdrop before Discord caches their default imports.
 		cleanup(
 			getModuleWithImportedPath<{ default: () => number }>(
 				'modules/channel_list_v2/native/useChannelListWidth.tsx',
@@ -95,6 +95,27 @@ export default plugin<{ jsonStorage: t.ServerDrawerPreferences }>({
 							chatLayout.getChatLayout().isChatBesideChannelList
 								? width
 								: width + constants.DM_WIDTH,
+						),
+					)
+					cleanup(
+						getModules(
+							withProps<{
+								ScreenAlignedThemedGradientSliding: unknown
+								default(props: {
+									offsetX?: number
+									offsetY?: number
+								}): React.ReactNode
+							}>('ScreenAlignedThemedGradientSliding'),
+							channelBackground => {
+								cleanup(
+									before(channelBackground, 'default', args => {
+										// The backdrop no longer starts after the hidden guild rail.
+										if (!chatLayout.getChatLayout().isChatBesideChannelList)
+											args[0] = { ...args[0], offsetX: 0 }
+										return args
+									}),
+								)
+							},
 						),
 					)
 				},
@@ -138,15 +159,9 @@ export default plugin<{ jsonStorage: t.ServerDrawerPreferences }>({
 						const [shade] = lookupModuleWithImportedPath<{
 							default: { type: () => t.PanelElement }
 						}>('modules/main_tabs_v2/native/you_bar/YouBarFloatingShade.tsx')
-						const [chatLayout] = lookupModule(
-							withProps<{
-								getChatLayout(): { isChatBesideChannelList: boolean }
-							}>('getChatLayout'),
-						)
 						if (
 							!inset ||
 							typeof shade?.default?.type !== 'function' ||
-							!chatLayout ||
 							typeof module.default?.type !== 'function'
 						) {
 							throw new Error(
@@ -207,27 +222,7 @@ export default plugin<{ jsonStorage: t.ServerDrawerPreferences }>({
 								<YouBarBackdrop element={element} />
 							)),
 						)
-						cleanup(
-							getModules(
-								withProps<{
-									ScreenAlignedThemedGradientSliding: unknown
-									default(props: {
-										offsetX?: number
-										offsetY?: number
-									}): React.ReactNode
-								}>('ScreenAlignedThemedGradientSliding'),
-								channelBackground => {
-									cleanup(
-										before(channelBackground, 'default', args => {
-											// The backdrop no longer starts after the hidden guild rail.
-											if (!chatLayout.getChatLayout().isChatBesideChannelList)
-												args[0] = { ...args[0], offsetX: 0 }
-											return args
-										}),
-									)
-								},
-							),
-						)
+
 						Panel = ServerDrawerLeftPanel
 						return <Panel key={element.key} element={element} />
 					} catch (error) {
