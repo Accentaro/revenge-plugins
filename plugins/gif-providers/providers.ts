@@ -55,7 +55,11 @@ function normalize(value: unknown, context: ProviderRequest): Gif | null {
 	}[quality]
 	const format = record(
 		provider === 'tenor'
-			? (media[quality] ?? media.tinygif ?? media.gif)
+			? (media[quality] ??
+					media.tinygif ??
+					media.gif ??
+					media.mp4 ??
+					media.webm)
 			: (images[rendition] ?? images.original),
 	)
 	const original = record(provider === 'tenor' ? media.gif : images.original)
@@ -155,10 +159,11 @@ export async function loadSuggestions(
 	trending: boolean,
 ): Promise<string[]> {
 	const tenor = context.provider === 'tenor'
-	if (tenor && trending) return []
 
 	const path = tenor
-		? 'search_suggestions'
+		? trending
+			? 'trending_terms'
+			: 'search_suggestions'
 		: trending
 			? 'trending/searches'
 			: 'gifs/search/tags'

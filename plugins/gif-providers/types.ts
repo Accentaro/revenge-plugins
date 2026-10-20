@@ -1,4 +1,3 @@
-import type { ReactElement, RefObject } from 'react'
 import type { GridQuality, Provider } from './storage'
 
 export interface Gif {
@@ -33,6 +32,15 @@ export type HttpRequest = (
 	...args: unknown[]
 ) => Promise<{ body: unknown }>
 
+export interface HttpModule {
+	HTTP: { get: HttpRequest; post: HttpRequest }
+	get: unknown
+	post: unknown
+	put: unknown
+	patch: unknown
+	del: unknown
+}
+
 export interface ProviderRequest {
 	provider: Exclude<Provider, 'klipy'>
 	query: string
@@ -40,19 +48,6 @@ export interface ProviderRequest {
 	locale: string
 	quality: GridQuality
 	signal: AbortSignal
-}
-
-export interface PickerHeaderProps {
-	categoryType: string
-	columnWidth: number
-	onQueryClear: () => void
-	onQueryChange: (query: string) => void
-	onFavoritesQueryChange: (query: string) => void
-	searchInputRef: RefObject<unknown>
-}
-
-export interface PickerControlsProps {
-	header: ReactElement<PickerHeaderProps>
 }
 
 export interface ProviderSelectProps {

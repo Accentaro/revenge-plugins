@@ -18,46 +18,40 @@ export const defaults: GifProvidersSettings = {
 	gridQuality: 'tinygif',
 	providers: ['tenor'],
 }
-export let gifProvidersSettings = defaults
-let storage: JsonStorage<GifProvidersSettings>
+export let storage: JsonStorage<GifProvidersSettings>
 let active = false
 const listeners = new Set<() => void>()
-export function selectedProviders(value: readonly Provider[]): Provider[] {
+
+export function selectedProviders(value?: readonly Provider[]): Provider[] {
 	const selected = providers.filter(provider => value?.includes(provider))
 	return selected.length ? selected : ['tenor']
 }
+
 export function configureStorage(instance: JsonStorage<GifProvidersSettings>) {
 	storage = instance
 }
-export async function loadSettings() {
-	const value = storage.cache ?? (await storage.get())
-	if (!value) throw new Error('Could not load GIF Providers settings.')
-	gifProvidersSettings = { ...defaults, ...value }
-	publish()
+
+export function getSettings(): GifProvidersSettings {
+	return { ...defaults, ...storage.cache }
 }
-function publish() {
-	for (const listener of listeners) listener()
-}
+
+// Mounted picker controls can outlive their patches when the plugin stops.
 export function setActive(value: boolean) {
 	active = value
-	publish()
+	for (const listener of listeners) listener()
 }
+
+export function useProvidersEnabled() {
+	return useSyncExternalStore(subscribe, () => active)
+}
+
 function subscribe(listener: () => void) {
 	listeners.add(listener)
 	return () => {
 		listeners.delete(listener)
 	}
 }
-export function useProvidersEnabled() {
-	return useSyncExternalStore(subscribe, () => active)
-}
-function updateSettings(update: Partial<GifProvidersSettings>) {
-	gifProvidersSettings = { ...gifProvidersSettings, ...update }
-	void storage.set(gifProvidersSettings, true)
-	publish()
-}
+
 export function useGifProvidersSettings() {
-	const settings = useSyncExternalStore(subscribe, () => gifProvidersSettings)
-	return { ...settings, updateSettings }
+	return { ...defaults, ...storage.use() }
 }
-useGifProvidersSettings.subscribe = subscribe

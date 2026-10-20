@@ -4,7 +4,8 @@ import {
 	loadSuggestions,
 	mergeGifs,
 } from './providers'
-import { gifProvidersSettings, selectedProviders } from './storage'
+import { getSettings, selectedProviders } from './storage'
+import type { DiscordModules } from '@revenge-mod/discord/types'
 import type {
 	Category,
 	Gif,
@@ -55,9 +56,10 @@ export async function loadProviders(
 	mediaFormat: string,
 	signal: AbortSignal,
 	get: HttpRequest,
+	logger: DiscordModules.Logger,
 ): Promise<Result> {
-	const selected = selectedProviders(gifProvidersSettings.providers)
-	const quality = gifProvidersSettings.gridQuality
+	const selected = selectedProviders(getSettings().providers)
+	const quality = getSettings().gridQuality
 	const results = await Promise.allSettled(
 		selected.map(provider =>
 			withTimeout(signal, async providerSignal => {
@@ -142,7 +144,7 @@ export async function loadProviders(
 	results.forEach((result, index) => {
 		if (result.status === 'fulfilled') pages.push(result.value)
 		else if (!signal.aborted)
-			console.warn(
+			logger.warn(
 				`[GifProviders] ${selected[index]} ${operation} failed`,
 				result.reason,
 			)
@@ -166,7 +168,10 @@ export async function loadProviders(
 			gifs.push(...page.gifs.filter(gif => typeof gif?.src === 'string'))
 		}
 
-		return { categories: [...categories.values()], gifs }
+		return {
+			categories: [...categories.values()],
+			gifs: gifs.length ? gifs : [{ src: '' }],
+		}
 	}
 	if (operation === 'suggest' || operation === 'trending-search')
 		return [

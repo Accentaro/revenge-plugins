@@ -1,67 +1,59 @@
-/** @jsxImportSource . */
+import Page from '@revenge-mod/components/Page'
 import { Design } from '@revenge-mod/discord/design'
-import { useEffect } from 'react'
-import { ScrollView } from 'react-native'
 import { ProviderSelect } from './picker'
-import {
-	configureStorage,
-	GridQualities,
-	loadSettings,
-	useGifProvidersSettings,
-} from './storage'
+import { configureStorage, defaults, GridQualities } from './storage'
 import type { PluginSettingsComponent } from '@revenge-mod/plugins/types'
 import type { ComponentProps } from 'react'
-import type {
-	GridQuality,
-	GifProvidersSettings as SettingsData,
-} from './storage'
+import type { GridQuality, GifProvidersSettings as Settings } from './storage'
 
-const labels: Record<GridQuality, { label: string; subLabel: string }> = {
-	gif: { label: 'GIF', subLabel: 'Original quality, ~500px — slowest' },
-	tinygif: {
-		label: 'TinyGIF',
-		subLabel: 'Small animated thumbnail, ~200px — default',
+const { TableRadioGroup, TableRadioRow } = Design
+
+const GridQualityRows: Record<
+	GridQuality,
+	{ label: string; subLabel: string }
+> = {
+	gif: {
+		label: 'High',
+		subLabel: 'Full-size GIFs. Uses the most data.',
 	},
-	nanogif: { label: 'NanoGIF', subLabel: 'Tiny thumbnail, ~100px — fastest' },
+	tinygif: {
+		label: 'Medium',
+		subLabel: 'Smaller GIFs. Recommended.',
+	},
+	nanogif: {
+		label: 'Low',
+		subLabel: 'Smallest GIFs. Uses the least data.',
+	},
 }
 
-export default function GifProvidersSettings({
-	api: { jsonStorage, plugin },
-}: ComponentProps<PluginSettingsComponent<{ jsonStorage: SettingsData }>>) {
-	configureStorage(jsonStorage)
-	jsonStorage.use()
-	useEffect(() => {
-		void loadSettings().catch(error => plugin.reportError(error))
-	}, [plugin])
-	const { gridQuality, updateSettings } = useGifProvidersSettings()
+type SettingsComponentProps = ComponentProps<
+	PluginSettingsComponent<{ jsonStorage: Settings }>
+>
+
+export default function SettingsComponent({
+	api: { jsonStorage: storage },
+}: SettingsComponentProps) {
+	configureStorage(storage)
+	const { gridQuality } = storage.use() ?? {}
 
 	return (
-		<ScrollView style={{ flex: 1 }}>
-			<Design.Stack
-				style={{ paddingVertical: 24, paddingHorizontal: 12 }}
-				spacing={24}
+		<Page>
+			<Design.TableRowGroup>
+				<ProviderSelect />
+			</Design.TableRowGroup>
+			<TableRadioGroup
+				title="GIF Quality"
+				value={gridQuality ?? defaults.gridQuality}
+				onChange={(gridQuality: GridQuality) => storage.set({ gridQuality })}
 			>
-				<Design.TableRowGroup title="Providers">
-					<ProviderSelect />
-				</Design.TableRowGroup>
-				<Design.TableRadioGroup
-					title="Tenor and Giphy grid quality"
-					value={gridQuality}
-					onChange={(value: string) => {
-						const quality = GridQualities.find(quality => quality === value)
-						if (quality) updateSettings({ gridQuality: quality })
-					}}
-				>
-					{GridQualities.map(q => (
-						<Design.TableRadioRow
-							key={q}
-							label={labels[q].label}
-							subLabel={labels[q].subLabel}
-							value={q}
-						/>
-					))}
-				</Design.TableRadioGroup>
-			</Design.Stack>
-		</ScrollView>
+				{GridQualities.map(quality => (
+					<TableRadioRow
+						key={quality}
+						value={quality}
+						{...GridQualityRows[quality]}
+					/>
+				))}
+			</TableRadioGroup>
+		</Page>
 	)
 }

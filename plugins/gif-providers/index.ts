@@ -1,5 +1,5 @@
 import { ToastActionCreators } from '@revenge-mod/discord/actions'
-import { onFluxEventDispatched, withStoreName } from '@revenge-mod/discord/flux'
+import { getStore, onFluxEventDispatched } from '@revenge-mod/discord/flux'
 import { getModules } from '@revenge-mod/modules/finders'
 import { withProps } from '@revenge-mod/modules/finders/filters'
 import { after, instead } from '@revenge-mod/patcher'
@@ -10,93 +10,73 @@ import GifProvidersSettings from './settings'
 import {
 	configureStorage,
 	defaults,
-	gifProvidersSettings,
-	loadSettings,
+	getSettings,
 	providerLabels,
 	selectedProviders,
 	setActive,
-	useGifProvidersSettings,
+	storage,
 } from './storage'
-import type { Filter, FilterResult } from '@revenge-mod/modules/finders/filters'
 import type { GifProvidersSettings as SettingsData } from './storage'
 import type {
 	GifActions,
 	GifViewStore,
+	HttpModule,
 	HttpRequest,
 	RequestOptions,
 } from './types'
 
-const patches: (() => void)[] = []
-const requests = new Map<string, AbortController>()
-let generation = 0
-
-function cancelRequests() {
-	for (const controller of requests.values()) controller.abort()
-	requests.clear()
-}
-
-function cleanup() {
-	generation++
-	cancelRequests()
-
-	for (const unpatch of patches.splice(0).reverse()) {
-		try {
-			unpatch()
-		} catch (error) {
-			console.error('[GifProviders] Cleanup failed', error)
-		}
-	}
-}
-
 export default plugin<{ jsonStorage: SettingsData }>({
 	jsonStorage: { default: defaults },
 	SettingsComponent: GifProvidersSettings,
-	async start({ cleanup: registerCleanup, jsonStorage, plugin }) {
-		cleanup()
-		registerCleanup(() => {
+	async start({ cleanup: registerCleanup, jsonStorage, plugin, logger }) {
+		const patches: (() => void)[] = []
+		const requests = new Map<string, AbortController>()
+		let stopped = false
+		function cancelRequests() {
+			for (const controller of requests.values()) controller.abort()
+			requests.clear()
+		}
+		function cleanup() {
+			stopped = true
 			setActive(false)
-			cleanup()
-		})
+			cancelRequests()
+			for (const unpatch of patches.splice(0).reverse()) {
+				try {
+					unpatch()
+				} catch (error) {
+					plugin.reportError(error)
+				}
+			}
+		}
+		registerCleanup(cleanup)
 		if (plugin.startedLate) plugin.requireReload()
-		const currentGeneration = generation
 		configureStorage(jsonStorage)
-		await loadSettings()
-		if (generation !== currentGeneration) return
+		await jsonStorage.get()
+		if (stopped) return
 		let actions: GifActions | undefined
 		patches.push(
 			getModules(
 				withProps<GifActions>('fetchTrendingGIFs', 'trackSelectGIF'),
 				value => {
-					if (generation === currentGeneration) actions = value
+					if (!stopped) actions = value
 				},
 			),
 		)
-		// Discover lazy GIF modules without blocking the plugin start lifecycle.
-		const wait = <F extends Filter>(filter: F) =>
-			new Promise<FilterResult<F> | undefined>(resolve => {
-				patches.push(() => resolve(undefined), getModules(filter, resolve))
-			})
-		const installation = Promise.all([
-			wait(withProps('HTTP', 'get', 'post', 'put', 'patch', 'del')),
-			wait(withStoreName<GifViewStore>('GIFPickerViewStore')),
-		]).then(([module, viewStore]) => {
-			if (generation !== currentGeneration || !module || !viewStore) return
-			const http = module.HTTP
+		function install(http: HttpModule['HTTP'], viewStore: GifViewStore) {
 			const get: HttpRequest = http.get.bind(http)
+
 			setActive(true)
 			patches.push(
 				getModules(
 					withProps('GIF_PROVIDER', 'getSearchPlaceholder'),
 					provider => {
-						if (generation !== currentGeneration) return
+						if (stopped) return
 						patches.push(
 							after(
 								provider,
 								'getSearchPlaceholder',
 								(placeholder: unknown) => {
-									const names = selectedProviders(
-										gifProvidersSettings.providers,
-									)
+									const names = selectedProviders(getSettings().providers)
 										.map(value => providerLabels[value])
 										.join(', ')
 									return typeof placeholder === 'string'
@@ -123,9 +103,10 @@ export default plugin<{ jsonStorage: SettingsData }>({
 					const [options] = args as [RequestOptions]
 					const match =
 						/^\/gifs\/(search|trending-gifs|trending|suggest|trending-search)$/.exec(
-							options?.url,
+							options?.url?.toLowerCase().replaceAll('_', '-'),
 						)
-					if (!match) return Reflect.apply(original, this, args)
+					if (!match || (match[1] === 'suggest' && !options.query?.q))
+						return Reflect.apply(original, this, args)
 
 					const operation = match[1] as Parameters<typeof loadProviders>[0]
 					const slot =
@@ -157,11 +138,12 @@ export default plugin<{ jsonStorage: SettingsData }>({
 						format,
 						controller.signal,
 						get,
+						logger,
 					)
 						.then(body => ({ body }))
 						.catch(error => {
 							if (!controller.signal.aborted) {
-								console.warn(`[GifProviders] ${operation} failed`, error)
+								logger.warn(`GIF ${operation} failed`, error)
 								if (slot === 'results')
 									ToastActionCreators.open('GIF_PROVIDERS_FAILED', {
 										text: 'Could not load GIFs. Try another provider.',
@@ -171,92 +153,85 @@ export default plugin<{ jsonStorage: SettingsData }>({
 							if (slot === 'results') throw error
 							return {
 								body:
-									operation === 'trending' ? { categories: [], gifs: [] } : [],
+									operation === 'trending'
+										? { categories: [], gifs: [{ src: '' }] }
+										: [],
 							}
 						})
 
-					// The picker attaches .then callbacks that dispatch directly to Flux.
-					// Skip obsolete callbacks: even its failure handler can clear a newer search.
-					return {
-						// biome-ignore lint/suspicious/noThenProperty: Native picker callbacks must ignore cancelled requests.
-						then: (
-							success?: (response: { body: unknown }) => unknown,
-							failure?: (error: unknown) => unknown,
-						) =>
-							pending
-								.then(
-									response => {
-										if (
-											!controller.signal.aborted &&
-											generation === currentGeneration
-										)
-											return success ? success(response) : response
-									},
-									error => {
-										if (
-											!controller.signal.aborted &&
-											generation === currentGeneration
-										) {
-											if (failure) return failure(error)
-											throw error
-										}
-									},
-								)
-								.finally(() => {
-									if (requests.get(slot) === controller) requests.delete(slot)
-								}),
-					}
+					// Obsolete requests stay unsettled so neither success nor failure clears newer results.
+					return new Promise<{ body: unknown }>((resolve, reject) => {
+						void pending
+							.then(
+								response => {
+									if (!controller.signal.aborted && !stopped) resolve(response)
+								},
+								error => {
+									if (!controller.signal.aborted && !stopped) reject(error)
+								},
+							)
+							.finally(() => {
+								if (requests.get(slot) === controller) requests.delete(slot)
+							})
+					})
 				}),
 			)
-			patches.push(
-				instead(http, 'post', function (args: unknown[], original) {
-					const [options] = args as [RequestOptions]
-					if (
-						options?.url !== '/gifs/select' ||
-						typeof options.body?.id !== 'string'
-					)
-						return Reflect.apply(original, this, args)
-					const match = /^(tenor|giphy|klipy):(.+)$/.exec(options.body.id)
-					if (!match) return Reflect.apply(original, this, args)
-					if (match[1] === 'klipy')
-						return Reflect.apply(original, this, [
-							{ ...options, body: { ...options.body, id: match[2] } },
-							...args.slice(1),
-						])
-					if (match[1] === 'giphy') return Promise.resolve({ body: {} })
+			for (const method of ['get', 'post'] as const)
+				patches.push(
+					instead(http, method, function (args: unknown[], original) {
+						const [options] = args as [RequestOptions]
+						const field = method === 'get' ? 'query' : 'body'
+						const data = options?.[field]
+						if (options?.url !== '/gifs/select' || typeof data?.id !== 'string')
+							return Reflect.apply(original, this, args)
+						const selected = selectedProviders(getSettings().providers)
+						const match =
+							/^(tenor|giphy|klipy):(.+)$/.exec(data.id) ??
+							(method === 'get' &&
+							selected.length === 1 &&
+							selected[0] === 'tenor'
+								? ['', 'tenor', data.id]
+								: null)
+						if (!match) return Reflect.apply(original, this, args)
+						if (match[1] === 'klipy')
+							return Reflect.apply(original, this, [
+								{ ...options, [field]: { ...data, id: match[2] } },
+								...args.slice(1),
+							])
+						if (match[1] === 'giphy') return Promise.resolve({ body: {} })
 
-					const controller = new AbortController()
-					const key = `share:${match[2]}`
-					requests.get(key)?.abort()
-					requests.set(key, controller)
-					const timer = setTimeout(() => controller.abort(), 10000)
+						const controller = new AbortController()
+						const key = `share:${match[2]}`
+						requests.get(key)?.abort()
+						requests.set(key, controller)
+						const timer = setTimeout(() => controller.abort(), 10000)
 
-					return registerShare(
-						{
-							provider: 'tenor',
-							query: String(options.body.q ?? ''),
-							limit: 1,
-							locale: 'en-US',
-							quality: gifProvidersSettings.gridQuality,
-							signal: controller.signal,
-						},
-						match[2],
-					)
-						.catch(error => {
-							if (!controller.signal.aborted)
-								console.warn('[GifProviders] Share registration failed', error)
-						})
-						.then(() => ({ body: {} }))
-						.finally(() => {
-							clearTimeout(timer)
-							if (requests.get(key) === controller) requests.delete(key)
-						})
-				}),
-			)
+						return registerShare(
+							{
+								provider: 'tenor',
+								query: String(data.q ?? ''),
+								limit: 1,
+								locale: 'en-US',
+								quality: getSettings().gridQuality,
+								signal: controller.signal,
+							},
+							match[2],
+						)
+							.catch(error => {
+								if (!controller.signal.aborted)
+									logger.warn('GIF share registration failed', error)
+							})
+							.then(() => ({ body: {} }))
+							.finally(() => {
+								clearTimeout(timer)
+								if (requests.get(key) === controller) requests.delete(key)
+							})
+					}),
+				)
 			patches.push(
 				patchPicker(
 					category => {
-						if (generation !== currentGeneration || !actions) return
+						if (stopped || !actions) return
 						const query: string = viewStore.getQuery()
 						actions.resetSearch()
 						actions.fetchTrending()
@@ -268,13 +243,26 @@ export default plugin<{ jsonStorage: SettingsData }>({
 					error => plugin.reportError(error),
 				),
 			)
-			patches.push(useGifProvidersSettings.subscribe(cancelRequests))
-		})
-		void installation.catch(error => {
-			if (generation !== currentGeneration) return
-			setActive(false)
-			cleanup()
-			plugin.reportError(error)
-		})
+			patches.push(storage.subscribe(cancelRequests))
+		}
+		patches.push(
+			getModules(
+				withProps<HttpModule>('HTTP', 'get', 'post', 'put', 'patch', 'del'),
+				module => {
+					if (stopped) return
+					patches.push(
+						getStore<GifViewStore>('GIFPickerViewStore', viewStore => {
+							if (stopped) return
+							try {
+								install(module.HTTP, viewStore)
+							} catch (error) {
+								cleanup()
+								plugin.reportError(error)
+							}
+						}),
+					)
+				},
+			),
+		)
 	},
 })

@@ -1,4 +1,3 @@
-/** @jsxImportSource . */
 import { getAssetIdByName as findAssetId } from '@revenge-mod/assets'
 import { ActionSheetActionCreators } from '@revenge-mod/discord/actions'
 import { Design } from '@revenge-mod/discord/design'
@@ -15,6 +14,7 @@ import {
 	providerLabels,
 	providers,
 	selectedProviders,
+	storage,
 	useGifProvidersSettings,
 	useProvidersEnabled,
 } from './storage'
@@ -53,7 +53,7 @@ function ProviderPill({ provider }: ProviderPillProps) {
 }
 
 function ProviderSheet() {
-	const { providers: saved, updateSettings } = useGifProvidersSettings()
+	const { providers: saved } = useGifProvidersSettings()
 	const selected = selectedProviders(saved)
 
 	return (
@@ -71,7 +71,7 @@ function ProviderSheet() {
 								const next = selected.includes(provider)
 									? selected.filter(item => item !== provider)
 									: [...selected, provider]
-								if (next.length) updateSettings({ providers: next })
+								if (next.length) void storage.set({ providers: next })
 							}}
 						/>
 					))}
@@ -166,7 +166,7 @@ export function patchPicker(
 	const memoName = createFilterGenerator<[string]>(
 		([name], _, value) =>
 			value != null && typeof value === 'object' && value.type?.name === name,
-		([name]) => `revenge-next.gif-providers.memo(${name})`,
+		([name]) => `palmdevs.tenor-gif-search.memo(${name})`,
 		FilterScopes.Initialized,
 	)
 	patches.push(
