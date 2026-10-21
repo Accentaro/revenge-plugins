@@ -1926,8 +1926,8 @@ export function createServerDrawer(
 							}
 							onPress={() => {
 								if (item.kind !== 'folder') return selectItem(item)
-								if (compactSize) setUi({ folderOverlayId: item.id })
-								else changeFolder(item.id)
+								if (compactSize) changeView('servers', true)
+								changeFolder(item.id)
 							}}
 						/>
 					)
