@@ -7,6 +7,7 @@ import type {
 import type {
 	Animated,
 	LayoutRectangle,
+	NativeSyntheticEvent,
 	StyleProp,
 	ViewProps,
 	ViewStyle,
@@ -45,6 +46,9 @@ export interface ServerDrawerPreferences {
 	readonly dmOrder: readonly string[]
 	readonly layout: DrawerLayout
 	readonly pullToMarkRead: boolean
+	readonly softDockGestures: boolean
+	readonly haptics: boolean
+	readonly carousel: boolean
 }
 
 export interface DirectMessage extends BadgeState {
@@ -86,6 +90,27 @@ export interface NativeGestureModule {
 		children: ReactNode
 		gesture: NativePanGesture
 	}>
+}
+
+export interface NativeCarouselGestureModule {
+	State: { BEGAN: number; ACTIVE: number; END: number }
+	PanGestureHandler: ComponentType<{
+		children: ReactNode
+		enabled: boolean
+		activeOffsetX: readonly [number, number]
+		failOffsetY: readonly [number, number]
+		maxPointers: number
+		shouldCancelWhenOutside: boolean
+		onGestureEvent: (event: NativeSyntheticEvent<NativePanStateEvent>) => void
+		onHandlerStateChange: (
+			event: NativeSyntheticEvent<NativePanStateEvent>,
+		) => void
+	}>
+}
+
+export interface NativePanStateEvent extends NativePanEvent {
+	state: number
+	oldState: number
 }
 
 export interface NativePanGesture {

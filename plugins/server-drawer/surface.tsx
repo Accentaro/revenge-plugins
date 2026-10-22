@@ -925,21 +925,48 @@ export function createServerDrawer(
 			throw new Error('Server Drawer: native back handler is unavailable')
 		const { useNavigatorBackPressHandler } = backPress
 		const [gestures] = lookupModule(
-			withProps<t.NativeGestureModule>('Gesture', 'GestureDetector'),
+			withProps<t.NativeGestureModule & t.NativeCarouselGestureModule>(
+				'Gesture',
+				'GestureDetector',
+				'PanGestureHandler',
+				'State',
+			),
 		)
 		if (!gestures)
 			throw new Error('Server Drawer: native gestures are unavailable')
-		const { Gesture, GestureDetector } = gestures
+		const { Gesture, GestureDetector, PanGestureHandler, State } = gestures
 		const {
 			touchSlop,
 			AnimatedView,
 			AnimatedPressable,
+			useCarouselMotion,
 			useDrawerMotion,
 			usePageMotion,
 			useFolderPageMotion,
 			useFolderOverlayMotion,
 		} = createDrawerMotion(Gesture)
 		const { Image, Pressable, ScrollView, Text, View, TextInput } = Native
+		const [MaskedView] = lookupModule(
+			withName<
+				import('react').ComponentType<
+					Native.ViewProps & {
+						maskElement: import('react').ReactElement
+					}
+				>
+			>('MaskedView'),
+		)
+		const [LinearGradient] = lookupModule(
+			withName<
+				import('react').ComponentType<
+					Native.ViewProps & {
+						colors: string[]
+						locations: number[]
+						start: { x: number; y: number }
+						end: { x: number; y: number }
+					}
+				>
+			>('LinearGradient'),
+		)
 
 		const { DragTarget, usePreview } = createDragMotion(
 			{ Gesture, GestureDetector },
@@ -1359,8 +1386,84 @@ export function createServerDrawer(
 			)
 		}
 
+		function DockCarousel({
+			nodes,
+			size,
+			slots,
+			position,
+			renderItem,
+		}: {
+			nodes: readonly t.DrawerNode[]
+			size: number
+			slots: number
+			position: Native.Animated.Value
+			renderItem: (node: t.DrawerNode) => import('react').ReactNode
+		}) {
+			const step = size + DOCK_ITEM_GAP
+			const edge = 12
+			const width = slots * step - DOCK_ITEM_GAP + edge * 2
+			// Leave one offscreen item on each side of the faded viewport.
+			const items = nodes.length === slots + 1 ? [...nodes, ...nodes] : nodes
+			if (!MaskedView || !LinearGradient)
+				throw new Error('Server Drawer: native carousel mask is unavailable')
+			return (
+				<MaskedView
+					style={{
+						width,
+						height: size + 12,
+						marginHorizontal: -edge,
+						marginVertical: -6,
+					}}
+					maskElement={
+						<LinearGradient
+							colors={['transparent', 'black', 'black', 'transparent']}
+							locations={[0, 8 / width, 1 - 8 / width, 1]}
+							start={{ x: 0, y: 0 }}
+							end={{ x: 1, y: 0 }}
+							style={{ flex: 1 }}
+						/>
+					}
+				>
+					<AnimatedView style={{ flex: 1 }}>
+						{items.map((node, index) => {
+							const translateX = Native.Animated.subtract(
+								Native.Animated.modulo(
+									Native.Animated.add(position, (index + 1) * step),
+									items.length * step,
+								),
+								step,
+							)
+							return (
+								<AnimatedView
+									key={`${index}:${node.id}`}
+									style={{
+										position: 'absolute',
+										top: 6,
+										left: edge,
+										width: size,
+										height: size,
+										opacity: translateX.interpolate({
+											inputRange: [-step, 0, (slots - 1) * step, slots * step],
+											outputRange: [0, 1, 1, 0],
+											extrapolate: 'clamp',
+										}),
+										transform: [{ translateX }],
+									}}
+								>
+									{renderItem(node)}
+								</AnimatedView>
+							)
+						})}
+					</AnimatedView>
+				</MaskedView>
+			)
+		}
+
 		function useDrawerData() {
 			const stored = jsonStorage.use() ?? DefaultSettings
+			const [softDockGestures] = useState(
+				() => stored.softDockGestures ?? false,
+			)
 			const layout: t.DrawerLayout = stored.layout === 'list' ? 'list' : 'grid'
 
 			const snapshot: t.ServerDrawerSnapshot = FluxUtils!.useStateFromStores(
@@ -1401,6 +1504,9 @@ export function createServerDrawer(
 				directMessages,
 				directMessageBadge,
 				pullToMarkRead: stored.pullToMarkRead,
+				softDockGestures,
+				haptics: stored.haptics ?? false,
+				carousel: stored.carousel ?? false,
 			}
 		}
 
@@ -1788,6 +1894,11 @@ export function createServerDrawer(
 				data.layout,
 			)
 
+			const carousel = useCarouselMotion(
+				State,
+				dockSpecs.itemSize + DOCK_ITEM_GAP,
+			)
+
 			const folderMotion = useFolderOverlayMotion(folderOverlayId)
 			const folderPageStyle = useFolderPageMotion(folderId)
 			const drawerFolder = data.nodes.find(
@@ -1828,6 +1939,10 @@ export function createServerDrawer(
 				expanded,
 				dockSpecs.dockHeight - DOCK_REST_OFFSET,
 				drawerHeight,
+				dockSpecs.dockHeight,
+				drawerHeight + YOU_BAR_JOIN_DEPTH,
+				data.softDockGestures,
+				data.haptics,
 				listAtTop,
 				!!active,
 				setDrawerOpen,
@@ -2252,76 +2367,106 @@ export function createServerDrawer(
 										}
 										style={[styles.compactFace, resize.compactStyle]}
 									>
-										<View
-											style={[styles.dockRow, { height: dockSpecs.itemSize }]}
+										<PanGestureHandler
+											enabled={
+												data.carousel &&
+												data.nodes.length > dockSpecs.itemCountNoExtras &&
+												!expanded &&
+												!active &&
+												!folderOverlayId
+											}
+											activeOffsetX={[-touchSlop, touchSlop]}
+											failOffsetY={[-touchSlop, touchSlop]}
+											maxPointers={1}
+											shouldCancelWhenOutside={false}
+											onGestureEvent={carousel.onGestureEvent}
+											onHandlerStateChange={carousel.onHandlerStateChange}
 										>
-											{Array.from(
-												{ length: dockSpecs.itemCountNoExtras },
-												(_, index) => {
-													const node = data.nodes[index]
-													if (
-														!node ||
-														(node.kind === 'folder' && !node.children.length)
-													)
-														return (
-															<View
-																key={`spacer-${index}`}
-																accessibilityElementsHidden
-																importantForAccessibility="no-hide-descendants"
-																style={{
-																	height: dockSpecs.itemSize,
-																	opacity: 0,
-																	width: dockSpecs.itemSize,
-																}}
-															/>
-														)
-
-													return renderItem(node, false, dockSpecs.itemSize)
-												},
-											)}
-											<View
-												style={[
-													styles.dockDivider,
-													{ height: Math.round(dockSpecs.itemSize * 0.7) },
-												]}
-											/>
-											<Pressable
-												accessibilityRole="button"
-												onPress={() => changeView('dms', true)}
-												accessibilityLabel={`Direct Messages${
-													data.directMessageBadge.mentionCount > 0
-														? `, ${data.directMessageBadge.mentionCount} mentions`
-														: data.directMessageBadge.unread
-															? ', unread'
-															: ''
-												}`}
-												style={[
-													styles.dmButton,
-													{
-														height: dockSpecs.itemSize,
-														width: dockSpecs.itemSize,
-													},
-												]}
+											<AnimatedView
+												style={[styles.dockRow, { height: dockSpecs.itemSize }]}
 											>
-												<Icon name="ChatIcon" color={TEXT_DEFAULT} />
-												<Badge state={data.directMessageBadge} compact />
-											</Pressable>
-											<Icon
-												label="View all servers"
-												onPress={() => setDrawerOpen(true)}
-												name="GridSquareIcon"
-												color={TEXT_DEFAULT}
-												buttonSize={dockSpecs.itemSize}
-												size={
-													Math.max(
-														10,
-														Math.floor((dockSpecs.itemSize * 0.8 - 5) / 2),
-													) *
-														2 +
-													5
-												}
-											/>
-										</View>
+												{data.carousel &&
+												data.nodes.length > dockSpecs.itemCountNoExtras ? (
+													<DockCarousel
+														nodes={data.nodes}
+														size={dockSpecs.itemSize}
+														slots={dockSpecs.itemCountNoExtras}
+														position={carousel.position}
+														renderItem={node =>
+															renderItem(node, false, dockSpecs.itemSize)
+														}
+													/>
+												) : (
+													Array.from(
+														{ length: dockSpecs.itemCountNoExtras },
+														(_, index) => {
+															const node = data.nodes[index]
+															if (
+																!node ||
+																(node.kind === 'folder' &&
+																	!node.children.length)
+															)
+																return (
+																	<View
+																		key={`spacer-${index}`}
+																		accessibilityElementsHidden
+																		importantForAccessibility="no-hide-descendants"
+																		style={{
+																			height: dockSpecs.itemSize,
+																			opacity: 0,
+																			width: dockSpecs.itemSize,
+																		}}
+																	/>
+																)
+
+															return renderItem(node, false, dockSpecs.itemSize)
+														},
+													)
+												)}
+												<View
+													style={[
+														styles.dockDivider,
+														{ height: Math.round(dockSpecs.itemSize * 0.7) },
+													]}
+												/>
+												<Pressable
+													accessibilityRole="button"
+													onPress={() => changeView('dms', true)}
+													accessibilityLabel={`Direct Messages${
+														data.directMessageBadge.mentionCount > 0
+															? `, ${data.directMessageBadge.mentionCount} mentions`
+															: data.directMessageBadge.unread
+																? ', unread'
+																: ''
+													}`}
+													style={[
+														styles.dmButton,
+														{
+															height: dockSpecs.itemSize,
+															width: dockSpecs.itemSize,
+														},
+													]}
+												>
+													<Icon name="ChatIcon" color={TEXT_DEFAULT} />
+													<Badge state={data.directMessageBadge} compact />
+												</Pressable>
+												<Icon
+													label="View all servers"
+													onPress={() => setDrawerOpen(true)}
+													name="GridSquareIcon"
+													color={TEXT_DEFAULT}
+													buttonSize={dockSpecs.itemSize}
+													size={
+														Math.max(
+															10,
+															Math.floor((dockSpecs.itemSize * 0.8 - 5) / 2),
+														) *
+															2 +
+														5
+													}
+												/>
+											</AnimatedView>
+										</PanGestureHandler>
 									</AnimatedView>
 									{/* Keep the static list ready so opening does not mount it during the gesture. */}
 									<AnimatedView
