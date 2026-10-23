@@ -44,6 +44,9 @@ By **j, Benjii**.
 ### Better Badges
 Allows you to rearrange all badges, including globalbadges, and hide any badge.
 
+### uiTweaks
+various ui quality of life tweaks for a cleaner user experience
+
 ## licenses
 Rain-derived plugin code retains [MPL-2.0](LICENSE.rain). The Revenge Next runtime and template code retain [GPL-3.0](LICENSE). Quoter includes gifenc by Matt DesLauriers under its embedded MIT license.
 
