@@ -153,7 +153,7 @@
       "author": "Accentaro <1356632712861192242>",
       "icon": "SettingsIcon",
       "channels": {
-        "latest": "0.0.2"
+        "latest": "0.0.3"
       },
       "versions": {
         "0.0.1": {
@@ -173,6 +173,19 @@
           "url": "https://accentaro.github.io/revenge-plugins/pool/dev.benjii.uiTweaks@0.0.2.zip",
           "sha256": "9b4714715488055237d27ec70f13a2237faa8ee569e55754036baaadf055956c",
           "size": 33156,
+          "dependencies": {
+            "revenge.api": {
+              "version": ">=1 <2"
+            },
+            "discord": {
+              "version": "*"
+            }
+          }
+        },
+        "0.0.3": {
+          "url": "https://accentaro.github.io/revenge-plugins/pool/dev.benjii.uiTweaks@0.0.3.zip",
+          "sha256": "187ef86207d05e62f57067a2e102a262c158a8fee610f5783998778d2fb0f364",
+          "size": 33162,
           "dependencies": {
             "revenge.api": {
               "version": ">=1 <2"
