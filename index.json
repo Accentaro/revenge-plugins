@@ -153,7 +153,7 @@
       "author": "Accentaro <1356632712861192242>",
       "icon": "SettingsIcon",
       "channels": {
-        "latest": "0.0.3"
+        "latest": "0.0.4"
       },
       "versions": {
         "0.0.1": {
@@ -194,6 +194,19 @@
               "version": "*"
             }
           }
+        },
+        "0.0.4": {
+          "url": "https://accentaro.github.io/revenge-plugins/pool/dev.benjii.uiTweaks@0.0.4.zip",
+          "sha256": "5b5517f57e38e0737287749418ec93cc0ebcd36e48af138f3e75ea51119741ad",
+          "size": 33249,
+          "dependencies": {
+            "revenge.api": {
+              "version": ">=1 <2"
+            },
+            "discord": {
+              "version": "*"
+            }
+          }
         }
       }
     },
@@ -206,7 +219,7 @@
       ],
       "icon": "StarIcon",
       "channels": {
-        "latest": "1.0.5"
+        "latest": "1.0.6"
       },
       "versions": {
         "1.0.4": {
@@ -226,6 +239,19 @@
           "url": "https://accentaro.github.io/revenge-plugins/pool/revenge-next.better-you-bar@1.0.5.zip",
           "sha256": "b161b4eb91fc515413cfcf8d8dc80f641c795e37491c01e656f9b2709d32442a",
           "size": 17953,
+          "dependencies": {
+            "revenge.api": {
+              "version": ">=1 <2"
+            },
+            "discord": {
+              "version": "*"
+            }
+          }
+        },
+        "1.0.6": {
+          "url": "https://accentaro.github.io/revenge-plugins/pool/revenge-next.better-you-bar@1.0.6.zip",
+          "sha256": "3954b3f95eeeab89d1f492570fc3716ca80e32a204d485d63fd1fc6bb737d22a",
+          "size": 18178,
           "dependencies": {
             "revenge.api": {
               "version": ">=1 <2"
