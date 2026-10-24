@@ -5,14 +5,18 @@ import { lookupModule } from '@revenge-mod/modules/finders'
 import { withProps } from '@revenge-mod/modules/finders/filters'
 import { instead } from '@revenge-mod/patcher'
 import { lookupGeneratedIconComponent } from '@revenge-mod/utils/discord'
+import SettingsComponent, { defaults } from './Settings'
 import type * as React from 'react'
+import type { Settings } from './Settings'
 
 type Notifications = {
 	type(props: { hasNameplate?: boolean }): React.ReactNode
 }
 
-export default plugin({
-	start({ cleanup, plugin }) {
+export default plugin<{ jsonStorage: Settings }>({
+	jsonStorage: { load: true, default: defaults },
+	SettingsComponent,
+	start({ cleanup, plugin, jsonStorage }) {
 		if (plugin.startedLate) {
 			plugin.requireReload()
 			return
@@ -45,6 +49,7 @@ export default plugin({
 					}
 					cleanup(
 						instead(module.default, 'type', function (args, original) {
+							const settings = { ...defaults, ...jsonStorage.use() }
 							const notification = Reflect.apply(original, this, args)
 							if (notification == null) return notification
 							const variant = args[0].hasNameplate
@@ -52,37 +57,41 @@ export default plugin({
 								: 'tertiary'
 							return (
 								<>
-									<IconButton
-										size="sm"
-										variant={variant}
-										icon={
-											<StarIcon
-												size="xs"
-												color={args[0].hasNameplate ? 'white' : undefined}
-												style={{ width: 18, height: 18 }}
-											/>
-										}
-										accessibilityLabel="Favorites"
-										onPress={() => guilds.transitionToGuild('@favorites')}
-									/>
+									{settings.showFavorites && (
+										<IconButton
+											size="sm"
+											variant={variant}
+											icon={
+												<StarIcon
+													size="xs"
+													color={args[0].hasNameplate ? 'white' : undefined}
+													style={{ width: 18, height: 18 }}
+												/>
+											}
+											accessibilityLabel="Favorites"
+											onPress={() => guilds.transitionToGuild('@favorites')}
+										/>
+									)}
 									{notification}
-									<IconButton
-										size="sm"
-										variant={variant}
-										icon={
-											<SettingsIcon
-												color={args[0].hasNameplate ? 'white' : undefined}
-												size="xs"
-												style={{ width: 18, height: 18 }}
-											/>
-										}
-										accessibilityLabel="Settings"
-										onPress={() =>
-											RootNavigationRef.getRootNavigationRef().navigate(
-												'settings',
-											)
-										}
-									/>
+									{settings.showSettings && (
+										<IconButton
+											size="sm"
+											variant={variant}
+											icon={
+												<SettingsIcon
+													color={args[0].hasNameplate ? 'white' : undefined}
+													size="xs"
+													style={{ width: 18, height: 18 }}
+												/>
+											}
+											accessibilityLabel="Settings"
+											onPress={() =>
+												RootNavigationRef.getRootNavigationRef().navigate(
+													'settings',
+												)
+											}
+										/>
+									)}
 								</>
 							)
 						}),
