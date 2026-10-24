@@ -129,6 +129,28 @@ export function createChatUi(
 	}
 	const snapshot = () => running
 
+	const CollapsibleInputContext = createContext(false)
+	function GuardContainer({ tree }: { tree: HostTree }) {
+		const collapsible = useContext(CollapsibleInputContext)
+		return collapsible
+			? cloneElement(tree, { style: [tree.props.style, { marginTop: 0 }] })
+			: tree
+	}
+	cleanup(
+		getModules(
+			withProps<{
+				ChatInputGuardContainer(props: HostProps): HostTree
+			}>('ChatInputGuardContainer'),
+			namespace => {
+				cleanup(
+					after(namespace, 'ChatInputGuardContainer', tree => (
+						<GuardContainer tree={tree} />
+					)),
+				)
+			},
+		),
+	)
+
 	const resetChatTabs = new Set<() => void>()
 	const ChatPageContext = createContext<{
 		chat: HostTree
@@ -669,7 +691,9 @@ export function createChatUi(
 								style={{ position: 'absolute', left: 0, right: 0, top: 0 }}
 								onLayout={event => setHeight(event.nativeEvent.layout.height)}
 							>
-								{composer}
+								<CollapsibleInputContext.Provider value={true}>
+									{composer}
+								</CollapsibleInputContext.Provider>
 							</View>
 						</AnimatedView>
 					</library.GestureDetector>

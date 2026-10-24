@@ -18,10 +18,10 @@ export interface Settings {
 }
 
 export const defaults: Settings = {
-	customizeMessageActions: true,
+	customizeMessageActions: false,
 	customizeSettings: false,
-	improvedHeader: true,
-	collapsibleInput: true,
+	improvedHeader: false,
+	collapsibleInput: false,
 	collapsibleYouBar: false,
 	improvedGuildHeader: false,
 	collapsibleGuildbar: false,
