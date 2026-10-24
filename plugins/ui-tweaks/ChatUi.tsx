@@ -119,6 +119,7 @@ export function createChatUi(
 	})
 	const AnimatedView = Animated.View
 	let running = true
+	let channelDetails: ComponentType<ChannelDetailsProps> | undefined
 	const listeners = new Set<() => void>()
 	const subscribe = (listener: () => void) => {
 		listeners.add(listener)
@@ -152,7 +153,8 @@ export function createChatUi(
 	function ChannelPage({ tree }: { tree: HostTree }) {
 		const { improvedHeader } = useSettings()
 		const Details = useMemo(
-			() => (improvedHeader ? loadChannelDetails() : undefined),
+			() =>
+				improvedHeader ? (channelDetails ??= loadChannelDetails()) : undefined,
 			[improvedHeader],
 		)
 		useEffect(() => {
@@ -437,7 +439,7 @@ export function createChatUi(
 		const hidden = collapsibleInput && collapsed
 		const hiddenRef = useRef(hidden)
 		hiddenRef.current = hidden
-		const animation = useRef(new Animated.Value(0)).current
+		const [animation] = useState(() => new Animated.Value(0))
 		const target = useRef(false)
 		const [height, setHeight] = useState(0)
 		const [nativeSpring] = lookupModule(
@@ -458,7 +460,6 @@ export function createChatUi(
 				}
 				Animated.spring(animation, {
 					...nativeSpring.YOU_BAR_SPRING_CONFIG,
-					damping: nativeSpring.YOU_BAR_SPRING_CONFIG.damping * 0.75,
 					overshootClamping: false,
 					velocity,
 					toValue: next ? 1 : 0,

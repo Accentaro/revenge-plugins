@@ -174,6 +174,9 @@ export function registerGuildbar({
 			(props: Record<string, unknown>) => Tree
 		>
 	}) {
+		return <GuildbarLayout tree={element.type(element.props)} />
+	}
+	function GuildbarLayout({ tree }: { tree: Tree }) {
 		const hidden = useHidden()
 		const position = useSyncExternalStore(subscribe, () => progress)
 		const enabled =
@@ -231,7 +234,6 @@ export function registerGuildbar({
 			if (!enabled || !running) setCollapsed(false)
 		}, [enabled, running])
 		useEffect(() => () => panel?.disallowGesture.set(false), [panel])
-		const tree = element.type(element.props)
 		if (!running || !enabled || !library || !gestures || width === undefined)
 			return tree
 		const children = tree.props.children

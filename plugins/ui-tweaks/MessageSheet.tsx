@@ -17,13 +17,22 @@ import {
 	createMessageSurface,
 } from './surfaces'
 import type { PluginApi } from '@revenge-mod/plugins/types'
-import type { ReactNode } from 'react'
+import type { ReactElement, ReactNode } from 'react'
 import type { Settings } from './Settings'
 import type { SheetElement } from './SheetEditor'
 import type { SurfaceDefinition } from './surfaces'
 
 type Api = PluginApi<{ jsonStorage: Settings }>
 const sheetKey = 'MessageLongPressActionSheet'
+
+interface ChannelContentProps {
+	channel?: { guild_id?: string }
+	onClose?(): void
+}
+type ChannelContent = ReactElement<
+	ChannelContentProps,
+	(props: ChannelContentProps) => ReactNode
+>
 
 export function registerMessageSheet(api: Api) {
 	const channelStore = Stores.ChannelStore as typeof Stores.ChannelStore & {
@@ -62,7 +71,22 @@ export function registerMessageSheet(api: Api) {
 		}
 	}
 
-	function ChannelSheet({ sheet }: { sheet: SheetElement }) {
+	function ChannelScope({
+		children,
+		surface,
+	}: {
+		children: ChannelContent
+		surface: SurfaceDefinition
+	}) {
+		const tree = children.type(children.props)
+		return (
+			<ChannelSurfaceContext.Provider value={surface}>
+				{tree}
+			</ChannelSurfaceContext.Provider>
+		)
+	}
+
+	function ChannelSheet({ children: sheet }: { children: SheetElement }) {
 		const surface = useContext(ChannelSurfaceContext)
 		return surface ? (
 			<EditorBoundary sheet={sheet} api={api} surface={surface} />
@@ -76,7 +100,7 @@ export function registerMessageSheet(api: Api) {
 			const header = sheet.props.header
 			return isValidElement(header) &&
 				componentName(header.type) === 'ActionSheetIconHeader' ? (
-				<ChannelSheet sheet={sheet} />
+				<ChannelSheet key={sheet.key}>{sheet}</ChannelSheet>
 			) : (
 				sheet
 			)
@@ -140,13 +164,21 @@ export function registerMessageSheet(api: Api) {
 								const channel = channelId
 									? channelStore.getChannel(channelId)
 									: undefined
-								if (!active || !channel) return tree
+								if (
+									!active ||
+									!channel ||
+									!isValidElement<ChannelContentProps>(tree) ||
+									typeof tree.type !== 'function'
+								)
+									return tree
+								// Keep the callable boundary and children visible to other sheet patches.
 								return (
-									<ChannelSurfaceContext.Provider
-										value={channel.guild_id ? channelSurface : dmSurface}
+									<ChannelScope
+										key={tree.key}
+										surface={channel.guild_id ? channelSurface : dmSurface}
 									>
-										{tree}
-									</ChannelSurfaceContext.Provider>
+										{tree as ChannelContent}
+									</ChannelScope>
 								)
 							}),
 						)

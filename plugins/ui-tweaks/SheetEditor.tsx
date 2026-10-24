@@ -306,10 +306,22 @@ export function EditableRow({
 	)
 }
 
-export function EditableGroup({
+export function EditableGroup(props: ComponentProps<typeof DraggableGroup>) {
+	if (props.editing) return <DraggableGroup {...props} />
+	const { group, preferences } = props
+	const children = applyOrder(
+		group.entries,
+		preferences.order,
+		entry => entry.id,
+	)
+		.filter(entry => !entry.id || !preferences.hidden.includes(entry.id))
+		.map(entry => entry.row)
+	return children.length ? cloneElement(group.element, { children }) : null
+}
+
+function DraggableGroup({
 	group,
 	preferences,
-	editing,
 	onChange,
 	RowComponent = EditableRow,
 }: {
@@ -374,7 +386,6 @@ export function EditableGroup({
 	}
 	const children = entries.flatMap<ReactNode>(entry => {
 		const hidden = !!entry.id && preferences.hidden.includes(entry.id)
-		if (!editing) return hidden ? [] : [entry.row]
 		const from = movable.indexOf(entry)
 		return [
 			<RowComponent

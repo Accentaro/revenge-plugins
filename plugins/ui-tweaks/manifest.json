@@ -5,7 +5,7 @@
 	"description": "various ui quality of life tweaks for a cleaner user experience",
 	"author": "Accentaro <1356632712861192242>",
 	"icon": "SettingsIcon",
-	"version": "0.0.1",
+	"version": "0.0.2",
 	"dependencies": {
 		"revenge.api": { "version": ">=1 <2" },
 		"discord": { "version": "*" }
