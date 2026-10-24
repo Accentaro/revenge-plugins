@@ -427,10 +427,10 @@ export function createChatUi(
 		}
 	}
 	function Composer({
-		tree,
+		children: tree,
 		inputRef,
 	}: {
-		tree: HostTree
+		children: HostTree
 		inputRef?: HostProps['ref']
 	}) {
 		const { collapsibleInput } = useSettings()
@@ -692,7 +692,7 @@ export function createChatUi(
 		),
 		StandaloneChannelScreen: (tree: HostTree) => <ChannelPage tree={tree} />,
 		ChatInput: (tree: HostTree, inputRef?: HostProps['ref']) => (
-			<Composer tree={tree} inputRef={inputRef} />
+			<Composer inputRef={inputRef}>{tree}</Composer>
 		),
 		Chat: (tree: HostTree) => <DirectionalChat tree={tree} />,
 	}
