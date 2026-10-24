@@ -219,7 +219,7 @@
       ],
       "icon": "StarIcon",
       "channels": {
-        "latest": "1.0.6"
+        "latest": "1.0.7"
       },
       "versions": {
         "1.0.4": {
@@ -252,6 +252,19 @@
           "url": "https://accentaro.github.io/revenge-plugins/pool/revenge-next.better-you-bar@1.0.6.zip",
           "sha256": "3954b3f95eeeab89d1f492570fc3716ca80e32a204d485d63fd1fc6bb737d22a",
           "size": 18178,
+          "dependencies": {
+            "revenge.api": {
+              "version": ">=1 <2"
+            },
+            "discord": {
+              "version": "*"
+            }
+          }
+        },
+        "1.0.7": {
+          "url": "https://accentaro.github.io/revenge-plugins/pool/revenge-next.better-you-bar@1.0.7.zip",
+          "sha256": "f88716f5b4199494d43cc50eabe8594057ab73e42e52ee16d0bf10521bed5e25",
+          "size": 19106,
           "dependencies": {
             "revenge.api": {
               "version": ">=1 <2"
