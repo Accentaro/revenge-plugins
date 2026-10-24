@@ -5,6 +5,7 @@ import { lookupModule } from '@revenge-mod/modules/finders'
 import { withProps } from '@revenge-mod/modules/finders/filters'
 import { instead } from '@revenge-mod/patcher'
 import { lookupGeneratedIconComponent } from '@revenge-mod/utils/discord'
+import { patchLocalFavorites } from './favorites'
 import SettingsComponent, { defaults } from './Settings'
 import type * as React from 'react'
 import type { Settings } from './Settings'
@@ -21,6 +22,7 @@ export default plugin<{ jsonStorage: Settings }>({
 			plugin.requireReload()
 			return
 		}
+		patchLocalFavorites(jsonStorage, cleanup)
 		cleanup(
 			getModuleWithImportedPath<{ default: Notifications }>(
 				'modules/main_tabs_v2/native/you_bar/YouBarNotificationsButton.tsx',
