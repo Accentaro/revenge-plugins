@@ -174,7 +174,13 @@ export function registerGuildbar({
 			(props: Record<string, unknown>) => Tree
 		>
 	}) {
-		return <GuildbarLayout tree={element.type(element.props)} />
+		const Content = useMemo(() => {
+			const Original = element.type
+			return function GuildbarContent(props: Record<string, unknown>) {
+				return <GuildbarLayout tree={Original(props)} />
+			}
+		}, [element.type])
+		return <Content {...element.props} />
 	}
 	function GuildbarLayout({ tree }: { tree: Tree }) {
 		const hidden = useHidden()
@@ -323,6 +329,9 @@ export function registerGuildbar({
 	cleanup(() => discovery.splice(0).forEach(unpatch => unpatch()))
 	return () => {
 		drawerActive = true
-		queueMicrotask(() => setCollapsed(false))
+		queueMicrotask(() => {
+			jsonStorage.set({ collapsibleGuildbar: false })
+			setCollapsed(false)
+		})
 	}
 }
