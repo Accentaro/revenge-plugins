@@ -53,9 +53,14 @@ export function createDrawerMotion(Gesture: t.NativeGestureModule['Gesture']) {
 		throw new Error('ServerDrawer: native panel animations are unavailable')
 	}
 
+	// Held tiles stop waiting for their long press past the platform touch slop (8dp Android, 10pt iOS).
+	// Drawer pans over tiles start beyond it, so drift during a hold cannot move the drawer.
+	const holdSlop = Math.max(config.touchSlopForPanGesture, 12)
 	const dockSpring = quest.QUEST_DOCK_MODE_CHANGE_PHYSICS
 	const bounce = springs.springUnclamped
 	const { triggerHapticFeedback, HapticFeedbackTypes } = haptics
+	const lightImpact = () =>
+		triggerHapticFeedback(HapticFeedbackTypes.IMPACT_LIGHT)
 
 	const animate = (
 		value: Animated.Value,
@@ -182,8 +187,7 @@ export function createDrawerMotion(Gesture: t.NativeGestureModule['Gesture']) {
 		useEffect(() => {
 			if (previousExpanded.current !== expanded) {
 				previousExpanded.current = expanded
-				if (hapticsEnabled)
-					triggerHapticFeedback(HapticFeedbackTypes.IMPACT_LIGHT)
+				if (hapticsEnabled) lightImpact()
 			}
 		}, [expanded, hapticsEnabled])
 		const origin = useRef(0)
@@ -208,7 +212,7 @@ export function createDrawerMotion(Gesture: t.NativeGestureModule['Gesture']) {
 						canPull
 							? [-config.touchSlopForPanGesture, config.touchSlopForPanGesture]
 							: expanded
-								? config.touchSlopForPanGesture
+								? holdSlop
 								: -config.touchSlopForPanGesture,
 					)
 
@@ -354,7 +358,7 @@ export function createDrawerMotion(Gesture: t.NativeGestureModule['Gesture']) {
 				.runOnJS(true)
 				.shouldCancelWhenOutside(false)
 				.enabled(enabled)
-				.activeOffsetX([-slop, slop])
+				.activeOffsetX([-holdSlop, holdSlop])
 				.failOffsetY([-slop, slop])
 				.onStart(event => {
 					active = true
@@ -526,6 +530,7 @@ export function createDrawerMotion(Gesture: t.NativeGestureModule['Gesture']) {
 	}
 
 	return {
+		lightImpact,
 		touchSlop: config.touchSlopForPanGesture,
 		AnimatedView: Animated.View,
 		AnimatedPressable: Animated.createAnimatedComponent(Pressable),

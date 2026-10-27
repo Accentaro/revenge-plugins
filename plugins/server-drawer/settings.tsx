@@ -47,7 +47,7 @@ export default function Settings({
 					/>
 					<Design.TableSwitchRow
 						label="Haptics"
-						subLabel="Light feedback when opening or closing the drawer, in either gesture mode."
+						subLabel="Light feedback when opening or closing the drawer and opening a focused context menu."
 						value={haptics}
 						onValueChange={value => jsonStorage.set({ haptics: value })}
 					/>

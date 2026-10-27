@@ -41,7 +41,10 @@ export function getNative() {
 	) as [{ useToken(color: string): string }, number]
 	const [contextMenu] = lookupModule(
 		withProps<{
-			ContextMenuStore: { getState(): { menu?: { items: t.MenuItem[] } } }
+			ContextMenuStore: {
+				getState(): { menu?: { items: t.MenuItem[] } }
+				subscribe(listener: () => void): () => void
+			}
 			hideContextMenu(): void
 		}>('ContextMenuStore', 'hideContextMenu'),
 	)

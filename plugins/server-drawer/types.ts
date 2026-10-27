@@ -77,7 +77,10 @@ export interface ReorderState extends ReorderGeometry {
 	target: number
 	start: DragPoint
 	point: DragPoint
-	mergeSince?: number
+	/** Reorder target still waiting out its dwell. */
+	pending?: number
+	/** Index of the item under the pointer that would become a folder. */
+	merge?: number
 	mergeReady?: boolean
 	moved?: boolean
 	outside?: boolean
@@ -97,8 +100,9 @@ export interface NativeCarouselGestureModule {
 	PanGestureHandler: ComponentType<{
 		children: ReactNode
 		enabled: boolean
-		activeOffsetX: readonly [number, number]
-		failOffsetY: readonly [number, number]
+		activeOffsetX?: readonly [number, number]
+		failOffsetY?: readonly [number, number]
+		activateAfterLongPress?: number
 		maxPointers: number
 		shouldCancelWhenOutside: boolean
 		onGestureEvent: (event: NativeSyntheticEvent<NativePanStateEvent>) => void
@@ -164,6 +168,7 @@ export type PanelElement = ReactElement<Record<string, unknown>>
 export interface ServerDrawerSurfaceProps {
 	bottomInset: number
 	onWidthChange(width: number): void
+	onFocusChange(focused: boolean): void
 }
 
 export interface MenuItem {
@@ -180,10 +185,20 @@ export interface GuildMenuProps {
 	children(props: NativeMenuAnchor): ReactNode
 }
 
+export interface DragFeedback {
+	active(): boolean
+	mergeReady(): boolean
+	merging(id: string): boolean
+	offset(id: string): DragPoint | undefined
+	subscribe(listener: () => void): () => void
+}
+
 export interface DragTargetProps {
 	readonly children: ReactNode
-	readonly offset?: DragPoint
+	readonly id: string
+	readonly feedback: DragFeedback
 	readonly preview: Record<'x' | 'y' | 'scale', Animated.Value>
+	onHold(bounds: import('react-native').LayoutRectangle): void
 	onCancel(): void
 	onDrop(point: DragPoint): void
 	onMove(point: DragPoint): void
@@ -202,7 +217,7 @@ export interface ItemProps {
 	readonly layout?: DrawerLayout
 	readonly selectedId?: string
 	readonly dragging?: boolean
-	readonly merging?: boolean
+	readonly feedback?: DragFeedback
 	readonly onPress?: () => void
 	readonly menu?: NativeMenuAnchor
 	readonly compactSize?: number
@@ -334,8 +349,5 @@ export interface DrawerCellProps {
 	width: number
 	selected: boolean
 	dragging: boolean
-	merging: boolean
-	offsetX?: number
-	offsetY?: number
 	render: import('react').RefObject<(props: DrawerCellProps) => ReactNode>
 }

@@ -10,6 +10,7 @@ import { after, before } from '@revenge-mod/patcher'
 import React from 'react'
 import * as Native from 'react-native'
 import { computeGuildDockSpecs } from './data'
+import { patchFocusMenu } from './focus'
 import SettingsComponent, { DefaultSettings } from './settings'
 import { createServerDrawer, DOCK_REST_OFFSET } from './surface'
 import type * as t from './types'
@@ -36,6 +37,7 @@ export default plugin<{ jsonStorage: t.ServerDrawerPreferences }>({
 			return
 		}
 		reportError = error => plugin.reportError(error)
+		patchFocusMenu(cleanup)
 		const abort = new AbortController()
 		cleanup(() => abort.abort())
 		cleanup(
@@ -201,6 +203,7 @@ export default plugin<{ jsonStorage: t.ServerDrawerPreferences }>({
 						}) {
 							const active = useActive()
 							const bottomInset = useInset()
+							const [focused, setFocused] = React.useState(false)
 							const [width, setWidth] = React.useState(
 								() => Native.Dimensions.get('window').width,
 							)
@@ -211,9 +214,11 @@ export default plugin<{ jsonStorage: t.ServerDrawerPreferences }>({
 											key="server-drawer"
 											bottomInset={bottomInset}
 											onWidthChange={setWidth}
+											onFocusChange={setFocused}
 										/>,
 										computeGuildDockSpecs(width - 16).dockHeight -
 											DOCK_REST_OFFSET,
+										focused,
 									)
 								: element
 						}
@@ -325,6 +330,7 @@ export function transformLeftPanelContent(
 	rendered: t.NativePanel,
 	dock: React.ReactNode,
 	dockHeight: number,
+	focused = false,
 ) {
 	const [rail, content] = rendered.props.children
 	return React.cloneElement(rendered, {
@@ -347,6 +353,7 @@ export function transformLeftPanelContent(
 			React.cloneElement(content, {
 				style: [
 					content.props.style,
+					focused && { filter: [{ blur: 12 }] },
 					{
 						bottom: dockHeight,
 						left: 0,

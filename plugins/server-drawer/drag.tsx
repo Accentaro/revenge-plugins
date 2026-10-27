@@ -1,12 +1,13 @@
 /** @jsxImportSource . */
 import { lookupModule } from '@revenge-mod/modules/finders'
 import { withProps } from '@revenge-mod/modules/finders/filters'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Animated } from 'react-native'
+import type { View } from 'react-native'
 import type * as t from './types'
 
 export function createDragMotion(
-	{ Gesture, GestureDetector }: t.NativeGestureModule,
+	{ PanGestureHandler, State }: t.NativeCarouselGestureModule,
 	longPressMs: number,
 ) {
 	const [timings] = lookupModule(
@@ -17,12 +18,17 @@ export function createDragMotion(
 	)
 	if (!timings)
 		throw new Error('Server Drawer: native animation timings are unavailable')
-	const { timingStandard } = timings
+	const { timingStandard, timingFast } = timings
+	const ORIGIN: t.DragPoint = Object.freeze({ x: 0, y: 0 })
 
-	function usePreview(width: number, grid: boolean) {
+	const settle = (value: Animated.Value, toValue: number) =>
+		Animated.timing(value, { ...timingFast, toValue, useNativeDriver: true })
+
+	function usePreview(width: number, grid: boolean, feedback: t.DragFeedback) {
 		const [x] = useState(() => new Animated.Value(0))
 		const [y] = useState(() => new Animated.Value(0))
 		const [scale] = useState(() => new Animated.Value(1))
+		const merging = useRef(false)
 		const style = useMemo(
 			() => ({
 				transform: [
@@ -34,90 +40,172 @@ export function createDragMotion(
 			[x, y, scale, width, grid],
 		)
 
+		// Shrink the lifted tile over a folder target so the target's highlight stays visible around it.
+		useEffect(
+			() =>
+				feedback.subscribe(() => {
+					const next = feedback.active() && feedback.mergeReady()
+					if (merging.current === next) return
+					merging.current = next
+					if (feedback.active()) settle(scale, next ? 0.8 : 1.05).start()
+				}),
+			[feedback, scale],
+		)
 		useEffect(() => () => scale.stopAnimation(), [scale])
 
 		return { x, y, scale, style }
 	}
 
 	function DragTarget(properties: t.DragTargetProps) {
+		const anchor = useRef<View>(null)
+		const held = useRef<t.DragPoint | undefined>(undefined)
+		const moving = useRef(false)
+		const focusTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+			undefined,
+		)
+		useEffect(
+			() => () => {
+				clearTimeout(focusTimer.current)
+				held.current = undefined
+			},
+			[],
+		)
 		const callbacks = useRef(properties)
 		callbacks.current = properties
 		const { x, y, scale } = properties.preview
-		const position = useRef<Animated.ValueXY | null>(null)
-		if (properties.offset && !position.current)
-			position.current = new Animated.ValueXY()
-		const offset = position.current
+		const { feedback } = properties
+		const [offset] = useState(() => new Animated.ValueXY())
+		const [grow] = useState(() => new Animated.Value(1))
+		const shown = useRef(ORIGIN)
+		const merging = useRef(false)
 		const style = useMemo(
-			() =>
-				offset ? { transform: offset.getTranslateTransform() } : undefined,
-			[offset],
+			() => ({
+				transform: [...offset.getTranslateTransform(), { scale: grow }],
+			}),
+			[offset, grow],
 		)
-		const previousOffset = useRef(properties.offset)
 
+		// Neighbours shift without re-rendering the drawer, so the pointer-driven preview keeps the JS thread.
 		useEffect(() => {
-			if (
-				previousOffset.current?.x === properties.offset?.x &&
-				previousOffset.current?.y === properties.offset?.y
-			)
-				return
-			previousOffset.current = properties.offset
-			if (!offset) return
-			const animation = Animated.timing(offset, {
-				duration: timingStandard?.duration ?? 300,
-				toValue: properties.offset ?? { x: 0, y: 0 },
-				useNativeDriver: true,
-			})
-			animation.start()
+			let animation: Animated.CompositeAnimation | undefined
+			const update = () => {
+				const { id } = callbacks.current
+				const target = feedback.merging(id)
+				if (merging.current !== target) {
+					merging.current = target
+					settle(grow, target ? 1.12 : 1).start()
+				}
+				const next = feedback.offset(id) ?? ORIGIN
+				if (next.x === shown.current.x && next.y === shown.current.y) return
+				shown.current = next
+				animation?.stop()
+				animation = Animated.timing(offset, {
+					...timingFast,
+					toValue: next,
+					useNativeDriver: true,
+				})
+				animation.start()
+			}
+			const unsubscribe = feedback.subscribe(update)
 
-			return () => animation.stop()
-		}, [offset, properties.offset?.x, properties.offset?.y])
+			return () => {
+				unsubscribe()
+				animation?.stop()
+				grow.stopAnimation()
+			}
+		}, [feedback, offset, grow])
 
-		const gesture = useMemo(
+		// A committed drop re-renders the list in its new order; clear the shift in that same commit.
+		useLayoutEffect(() => {
+			if (feedback.active()) return
+			if (merging.current) {
+				merging.current = false
+				grow.stopAnimation()
+				grow.setValue(1)
+			}
+			if (shown.current === ORIGIN) return
+			shown.current = ORIGIN
+			offset.stopAnimation()
+			offset.setValue(ORIGIN)
+		})
+
+		const onGestureEvent = useMemo(
 			() =>
-				Gesture.Pan()
-					.runOnJS(true)
-					.activateAfterLongPress(longPressMs)
-					.shouldCancelWhenOutside(false)
-					.onStart(event => {
-						x.setValue(event.absoluteX)
-						y.setValue(event.absoluteY)
-						scale.stopAnimation()
-						Animated.timing(scale, {
-							...timingStandard,
-							toValue: 1.05,
-							useNativeDriver: true,
-						}).start()
-						callbacks.current.onStart({
-							x: event.absoluteX,
-							y: event.absoluteY,
-						})
-					})
-					.onUpdate(event => {
-						x.setValue(event.absoluteX)
-						y.setValue(event.absoluteY)
+				Animated.event([{ nativeEvent: { absoluteX: x, absoluteY: y } }], {
+					useNativeDriver: false,
+					listener: ({
+						nativeEvent: event,
+					}: import('react-native').NativeSyntheticEvent<t.NativePanStateEvent>) => {
+						const start = held.current
+						if (!start) return
+						if (!moving.current) {
+							if (
+								Math.hypot(
+									event.absoluteX - start.x,
+									event.absoluteY - start.y,
+								) <= 10
+							)
+								return
+							moving.current = true
+							clearTimeout(focusTimer.current)
+							callbacks.current.onStart(start)
+							Animated.timing(scale, {
+								...timingStandard,
+								toValue: 1.05,
+								useNativeDriver: true,
+							}).start()
+						}
 						callbacks.current.onMove({ x: event.absoluteX, y: event.absoluteY })
-					})
-					.onEnd((event, success) => {
-						if (success)
-							callbacks.current.onDrop({
-								x: event.absoluteX,
-								y: event.absoluteY,
-							})
-					})
-					.onFinalize((_event, success) => {
-						scale.stopAnimation()
-						scale.setValue(1)
-						if (!success) callbacks.current.onCancel()
-					}),
+					},
+				}),
 			[x, y, scale],
 		)
+		const onHandlerStateChange = ({
+			nativeEvent: event,
+		}: import('react-native').NativeSyntheticEvent<t.NativePanStateEvent>) => {
+			if (event.state === State.ACTIVE) {
+				x.setValue(event.absoluteX)
+				y.setValue(event.absoluteY)
+				moving.current = false
+				const point = { x: event.absoluteX, y: event.absoluteY }
+				held.current = point
+				clearTimeout(focusTimer.current)
+				// Give a drag time to start before showing the stationary-hold menu.
+				focusTimer.current = setTimeout(() => {
+					anchor.current?.measureInWindow((x, y, width, height) => {
+						if (held.current === point && !moving.current)
+							callbacks.current.onHold({ x, y, width, height })
+					})
+				}, 250)
+			} else if (event.oldState === State.ACTIVE) {
+				clearTimeout(focusTimer.current)
+				if (moving.current && event.state === State.END)
+					callbacks.current.onDrop({
+						x: event.absoluteX,
+						y: event.absoluteY,
+					})
+				else if (moving.current || event.state !== State.END)
+					callbacks.current.onCancel()
+				held.current = undefined
+				moving.current = false
+				scale.stopAnimation()
+				scale.setValue(1)
+			}
+		}
 
 		return (
-			<GestureDetector gesture={gesture}>
-				<Animated.View collapsable={false} style={style}>
+			<PanGestureHandler
+				enabled
+				activateAfterLongPress={longPressMs}
+				maxPointers={1}
+				shouldCancelWhenOutside={false}
+				onGestureEvent={onGestureEvent}
+				onHandlerStateChange={onHandlerStateChange}
+			>
+				<Animated.View ref={anchor} collapsable={false} style={style}>
 					{properties.children}
 				</Animated.View>
-			</GestureDetector>
+			</PanGestureHandler>
 		)
 	}
 

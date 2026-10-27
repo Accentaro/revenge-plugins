@@ -11,6 +11,7 @@ import {
 	withProps,
 } from '@revenge-mod/modules/finders/filters'
 import {
+	cloneElement,
 	Fragment,
 	memo,
 	startTransition,
@@ -19,9 +20,11 @@ import {
 	useReducer,
 	useRef,
 	useState,
+	useSyncExternalStore,
 } from 'react'
 import * as Native from 'react-native'
 import { createDragMotion } from './drag'
+import { focusMenus } from './focus'
 import { reportActionFailure } from './index'
 import { createDrawerMotion } from './motion'
 import { getNative, withStoreDependencies } from './native'
@@ -30,6 +33,7 @@ import type { JsonStorage } from '@revenge-mod/json-storage'
 
 const clamp = (value: number, min: number, max: number) =>
 	Math.min(max, Math.max(min, value))
+const unsubscribed = () => () => {}
 
 import {
 	computeGuildDockSpecs,
@@ -98,6 +102,8 @@ export function createServerDrawer(
 		: undefined
 
 	const LONG_PRESS_MS = 500
+	const MOVE_DWELL_MS = 120
+	const MERGE_DWELL_MS = 350
 	const CENTER = { alignItems: 'center', justifyContent: 'center' } as const
 	const ROW = { alignItems: 'center', flexDirection: 'row' } as const
 	const EMPTY_SNAPSHOT: t.ServerDrawerSnapshot = Object.freeze({
@@ -826,12 +832,6 @@ export function createServerDrawer(
 						})
 					: false
 			},
-
-			animateNext: (duration?: number) =>
-				Native.LayoutAnimation.configureNext({
-					duration: duration ?? 110,
-					update: { type: Native.LayoutAnimation.Types.easeInEaseOut },
-				}),
 		}
 	}
 
@@ -883,6 +883,7 @@ export function createServerDrawer(
 				[guild.id, labels],
 			)
 			useEffect(() => {
+				focusMenus.add(items)
 				const close = () => {
 					if (contextMenu!.ContextMenuStore.getState().menu?.items === items)
 						contextMenu!.hideContextMenu()
@@ -892,6 +893,7 @@ export function createServerDrawer(
 				return () => {
 					signal.removeEventListener('abort', close)
 					close()
+					focusMenus.delete(items)
 				}
 			}, [items])
 
@@ -944,6 +946,7 @@ export function createServerDrawer(
 			usePageMotion,
 			useFolderPageMotion,
 			useFolderOverlayMotion,
+			lightImpact,
 		} = createDrawerMotion(Gesture)
 		const { Image, Pressable, ScrollView, Text, View, TextInput } = Native
 		const [MaskedView] = lookupModule(
@@ -969,7 +972,7 @@ export function createServerDrawer(
 		)
 
 		const { DragTarget, usePreview } = createDragMotion(
-			{ Gesture, GestureDetector },
+			{ PanGestureHandler, State },
 			LONG_PRESS_MS,
 		)
 
@@ -1138,7 +1141,7 @@ export function createServerDrawer(
 			layout = 'grid',
 			selectedId,
 			dragging,
-			merging,
+			feedback,
 			onPress,
 			menu,
 			compactSize,
@@ -1146,6 +1149,10 @@ export function createServerDrawer(
 			animate,
 		}: t.ItemProps) {
 			const styles = useStyles()
+			const merging = useSyncExternalStore(
+				feedback?.subscribe ?? unsubscribed,
+				() => !!feedback?.merging(item.id),
+			)
 			const touch = useRef<t.DragPoint | undefined>(undefined)
 			const moved = useRef(false)
 			const press = {
@@ -1516,15 +1523,75 @@ export function createServerDrawer(
 			const mergeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
 				undefined,
 			)
+			const moveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+				undefined,
+			)
+			const settleTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+				undefined,
+			)
+			const listeners = useRef(new Set<() => void>())
+			const messages = useRef(directMessages)
+			messages.current = directMessages
 			const exitTarget = useRef<Native.View | null>(null)
 
-			useEffect(() => () => clearTimeout(mergeTimer.current), [])
+			useEffect(
+				() => () => {
+					clearTimeout(mergeTimer.current)
+					clearTimeout(moveTimer.current)
+					clearTimeout(settleTimer.current)
+				},
+				[],
+			)
+			const notify = () => {
+				for (const listener of listeners.current) listener()
+			}
+			// Tiles subscribe to hover changes so the drawer only re-renders when a drag starts or ends.
+			const [feedback] = useState<t.DragFeedback>(() => ({
+				active: () => !!reorder.current,
+				mergeReady: () => !!reorder.current?.mergeReady,
+				merging: id => {
+					const active = reorder.current
+					return (
+						!!active?.mergeReady &&
+						active.merge !== undefined &&
+						active.items[active.merge]?.id === id
+					)
+				},
+				offset: id => {
+					const active = reorder.current
+					if (!active || active.from === active.target) return
+					const index = active.items.findIndex(item => item.id === id)
+					const { from, target, columns, columnStep, rowStep } = active
+					if (index < 0 || index === from) return
+					const slot =
+						from < target && index > from && index <= target
+							? index - 1
+							: target < from && index >= target && index < from
+								? index + 1
+								: index
+					if (slot === index) return
+
+					return {
+						x: ((slot % columns) - (index % columns)) * columnStep,
+						y:
+							(Math.floor(slot / columns) - Math.floor(index / columns)) *
+							rowStep,
+					}
+				},
+				subscribe: listener => {
+					listeners.current.add(listener)
+					return () => {
+						listeners.current.delete(listener)
+					}
+				},
+			}))
 			const exitBounds = useRef<Native.LayoutRectangle | undefined>(undefined)
 
 			const measureExit = () => {
 				const target = exitTarget.current
 				exitBounds.current = undefined
-				target?.measureInWindow((x, y, width, height) => {
+				// Gesture absoluteX/Y and measure pageX/Y share the screen coordinate space.
+				target?.measure((_localX, _localY, width, height, x, y) => {
 					if (exitTarget.current === target)
 						exitBounds.current = { x, y, width, height }
 				})
@@ -1541,6 +1608,7 @@ export function createServerDrawer(
 				if (from < 0) return
 				measureExit()
 				clearTimeout(mergeTimer.current)
+				clearTimeout(moveTimer.current)
 				reorder.current = {
 					...geometry,
 					source,
@@ -1558,16 +1626,7 @@ export function createServerDrawer(
 				const active = reorder.current
 				if (!active) return
 
-				const {
-					source,
-					from,
-					columns,
-					columnStep,
-					rowStep,
-					target: previousTarget,
-					mergeSince,
-					outside,
-				} = active
+				const { source, items, from, columns, columnStep, rowStep } = active
 				const dx = x - active.start.x,
 					dy = y - active.start.y
 				const grid = active.layout === 'grid'
@@ -1575,95 +1634,140 @@ export function createServerDrawer(
 				active.point = { x, y }
 				active.moved ||= Math.hypot(dx, dy) > 10
 
-				active.outside =
+				const outside =
 					source.kind === 'guild' &&
 					!!source.folderId &&
 					!!exitTarget.current &&
 					hitsDropTarget(active.point, exitBounds.current)
-				active.target = active.outside
-					? from
-					: clamp(
-							from +
-								Math.round(dy / rowStep) * columns +
-								(grid ? Math.round(dx / columnStep) : 0),
-							0,
-							active.items.length - 1,
-						)
+				let changed = false
+				if (outside !== !!active.outside) {
+					active.outside = outside
+					refresh()
+				}
+				if (outside && active.target !== from) {
+					active.target = from
+					changed = true
+				}
+				const { target } = active
 
-				const target = active.items[active.target]
-				const row =
-					Math.floor(active.target / columns) - Math.floor(from / columns)
-				const column = (active.target % columns) - (from % columns)
+				// Pointer position in slots of the original layout.
+				const column = grid ? (from % columns) + dx / columnStep : 0
+				const row = Math.floor(from / columns) + dy / rowStep
+				const slot = clamp(
+					Math.round(row) * columns + clamp(Math.round(column), 0, columns - 1),
+					0,
+					items.length - 1,
+				)
+				const offsetX = (column - (slot % columns)) * columnStep
+				const offsetY = (row - Math.floor(slot / columns)) * rowStep
 				const centered =
-					Math.abs(dy - row * rowStep) < (grid ? 22 : 20) &&
-					(!grid || Math.abs(dx - column * columnStep) < 22)
+					Math.abs(offsetY) < (grid ? 22 : 20) &&
+					(!grid || Math.abs(offsetX) < 22)
+				// The item currently drawn in that slot, after neighbours made room at the target.
+				const index =
+					slot === target
+						? undefined
+						: from < target && slot >= from && slot < target
+							? slot + 1
+							: target < from && slot > target && slot <= from
+								? slot - 1
+								: slot
+				const hovered = index === undefined ? undefined : items[index]
+
+				// A tile's centre makes a folder and never moves away; its edges and the gaps reorder.
 				const merge =
-					source.kind === 'guild' &&
-					target.kind &&
-					from !== active.target &&
+					!outside &&
 					centered &&
-					(target.kind === 'folder'
-						? source.folderId !== target.id
-						: !source.folderId || source.folderId !== target.folderId)
-				active.mergeSince = merge
-					? previousTarget === active.target
-						? (mergeSince ?? Date.now())
-						: Date.now()
-					: undefined
-				if (mergeSince !== active.mergeSince) {
+					source.kind === 'guild' &&
+					hovered?.kind &&
+					(hovered.kind === 'folder'
+						? source.folderId !== hovered.id
+						: !source.folderId || source.folderId !== hovered.folderId)
+						? index
+						: undefined
+				const next =
+					outside || merge !== undefined || index === undefined
+						? target
+						: (grid ? offsetX : offsetY) < 0
+							? index > from
+								? index - 1
+								: index
+							: index > from
+								? index
+								: index + 1
+
+				if (merge !== active.merge) {
 					clearTimeout(mergeTimer.current)
+					changed ||= !!active.mergeReady
+					active.merge = merge
 					active.mergeReady = false
-					if (active.mergeSince !== undefined)
+					if (merge !== undefined)
 						mergeTimer.current = setTimeout(() => {
 							if (reorder.current !== active) return
 							active.mergeReady = true
-							refresh()
-						}, 450)
+							notify()
+						}, MERGE_DWELL_MS)
 				}
 
-				if (
-					outside !== active.outside ||
-					!!mergeSince !== !!active.mergeSince ||
-					previousTarget !== active.target
-				)
-					refresh()
+				const pending = next === target ? undefined : next
+				if (pending !== active.pending) {
+					clearTimeout(moveTimer.current)
+					active.pending = pending
+					// Passing over a tile on the way somewhere else should not shuffle it.
+					if (pending !== undefined)
+						moveTimer.current = setTimeout(() => {
+							if (reorder.current !== active) return
+							active.target = pending
+							active.pending = undefined
+							notify()
+						}, MOVE_DWELL_MS)
+				}
+
+				if (changed) notify()
 			}
 
-			const cancel = () => {
+			const end = (committed: boolean) => {
 				if (!reorder.current) return
 				clearTimeout(mergeTimer.current)
+				clearTimeout(moveTimer.current)
 				reorder.current = undefined
-				controller.animateNext(110)
 				refresh()
+				if (!committed) return notify()
+				// Shifted tiles reset as the list renders its new order; this only catches a rejected drop.
+				clearTimeout(settleTimer.current)
+				settleTimer.current = setTimeout(notify, 300)
 			}
+
+			const cancel = () => end(false)
 
 			const finish = (showMenu = false) => {
 				const active = reorder.current
 				if (!active) return
-				cancel()
 
-				const { source, items, target, from, outside, moved, mergeSince } =
+				const { source, items, from, outside, moved, merge, mergeReady } =
 					active
-				if (showMenu && !moved) return active.openMenu?.()
+				const target = active.pending ?? active.target
+				const into = mergeReady ? merge : undefined
+				const exit = outside && source.kind === 'guild' && source.folderId
+				const menu = showMenu && !moved
+				end(!menu && (!!exit || into !== undefined || from !== target))
+				if (menu) return active.openMenu?.()
 
 				try {
 					if (!source.kind) {
-						const dmOrder = directMessages.map(item => item.id)
+						const dmOrder = messages.current.map(item => item.id)
 						const sourceIndex = dmOrder.indexOf(source.id),
 							targetIndex = dmOrder.indexOf(items[target].id)
 						if (from === target || sourceIndex < 0 || targetIndex < 0) return
 						dmOrder.splice(targetIndex, 0, ...dmOrder.splice(sourceIndex, 1))
 						jsonStorage.set({ dmOrder })
 					} else {
-						const merge =
-							mergeSince !== undefined && Date.now() - mergeSince >= 450
-						const exit = outside && source.kind === 'guild' && source.folderId
-						if (!exit && from === target) return
+						if (!exit && into === undefined && from === target) return
 						if (
 							controller.commitDrop(
 								source.id,
-								exit || items[target].id,
-								exit ? 'exit' : merge ? 'merge' : 'move',
+								exit || items[into ?? target].id,
+								exit ? 'exit' : into !== undefined ? 'merge' : 'move',
 							) === false
 						)
 							throw new Error('Drop target is no longer available')
@@ -1673,34 +1777,13 @@ export function createServerDrawer(
 				}
 			}
 
-			const offset = (id: string): t.DragPoint | undefined => {
-				const active = reorder.current
-				if (!active || active.outside || active.mergeReady) return
-				const index = active.items.findIndex(item => item.id === id)
-				const { from, target, columns, columnStep, rowStep } = active
-				if (index < 0 || index === from) return
-				const slot =
-					from < target && index > from && index <= target
-						? index - 1
-						: target < from && index >= target && index < from
-							? index + 1
-							: index
-
-				return {
-					x: ((slot % columns) - (index % columns)) * columnStep,
-					y:
-						(Math.floor(slot / columns) - Math.floor(index / columns)) *
-						rowStep,
-				}
-			}
-
 			return {
 				reorder,
 				exitTarget,
 				measureExit,
 				begin,
 				finish,
-				offset,
+				feedback,
 				handlers: {
 					onMove: move,
 					onCancel: cancel,
@@ -1834,10 +1917,57 @@ export function createServerDrawer(
 			)
 		}
 
+		function CompactFocus({
+			children,
+			onHold,
+		}: {
+			children: (hold: () => void) => import('react').ReactNode
+			onHold(bounds: Native.LayoutRectangle): void
+		}) {
+			const anchor = useRef<Native.View>(null)
+			return (
+				<View ref={anchor} collapsable={false}>
+					{children(() =>
+						anchor.current?.measureInWindow((x, y, width, height) =>
+							onHold({ x, y, width, height }),
+						),
+					)}
+				</View>
+			)
+		}
+
 		return function ServerDrawerSurface({
 			bottomInset,
 			onWidthChange,
+			onFocusChange,
 		}: t.ServerDrawerSurfaceProps) {
+			const root = useRef<Native.View>(null)
+			const focusGeneration = useRef(0)
+			useEffect(
+				() => () => {
+					focusGeneration.current++
+				},
+				[],
+			)
+			const [focus, setFocus] = useState<{
+				item: t.DrawerItem
+				bounds: Native.LayoutRectangle
+				compactSize?: number
+				layout: t.DrawerLayout
+			}>()
+			useEffect(() => {
+				onFocusChange(!!focus)
+				return () => onFocusChange(false)
+			}, [focus, onFocusChange])
+			useEffect(
+				() =>
+					contextMenu!.ContextMenuStore.subscribe(() => {
+						if (!contextMenu!.ContextMenuStore.getState().menu)
+							setFocus(undefined)
+					}),
+				[],
+			)
+
 			const styles = useStyles()
 			const TEXT_MUTED: string = useToken(semanticColors.TEXT_MUTED)
 			const TEXT_DEFAULT: string = useToken(semanticColors.TEXT_DEFAULT)
@@ -1921,7 +2051,7 @@ export function createServerDrawer(
 				query,
 			)
 			const drag = useReorder(data.directMessages)
-			const preview = usePreview(previewWidth, grid)
+			const preview = usePreview(previewWidth, grid, drag.feedback)
 			const active = drag.reorder.current
 			const markAllRead = () => {
 				if (
@@ -2023,6 +2153,22 @@ export function createServerDrawer(
 				animate,
 			}: t.DrawerCellProps) => {
 				const render = (menu?: t.NativeMenuAnchor) => {
+					const showFocus = (bounds: Native.LayoutRectangle) => {
+						if (!menu?.onLongPress) return
+						const generation = ++focusGeneration.current
+						root.current?.measureInWindow((x, y) => {
+							if (signal.aborted || generation !== focusGeneration.current)
+								return
+							setFocus({
+								item,
+								compactSize,
+								bounds: { ...bounds, x: bounds.x - x, y: bounds.y - y },
+								layout: inFolder ? 'grid' : data.layout,
+							})
+							menu.onLongPress?.()
+							if (data.haptics) lightImpact()
+						})
+					}
 					const content = (
 						<Item
 							item={item}
@@ -2031,11 +2177,7 @@ export function createServerDrawer(
 							compactSize={compactSize}
 							layout={inFolder ? 'grid' : data.layout}
 							dragging={active?.source.id === item.id}
-							merging={
-								!inFolder &&
-								active?.mergeReady === true &&
-								active.items[active.target].id === item.id
-							}
+							feedback={compactSize ? undefined : drag.feedback}
 							selectedId={
 								item.kind ? data.selectedGuildId : data.selectedPrivateChannelId
 							}
@@ -2048,13 +2190,30 @@ export function createServerDrawer(
 					)
 
 					return compactSize ? (
-						content
+						<CompactFocus onHold={showFocus}>
+							{onLongPress =>
+								cloneElement(content, {
+									menu: menu ? { ...menu, onLongPress } : undefined,
+								})
+							}
+						</CompactFocus>
 					) : (
 						<DragTarget
+							id={item.id}
 							preview={preview}
-							offset={drag.offset(item.id)}
+							feedback={drag.feedback}
 							{...drag.handlers}
-							onStart={point =>
+							onHold={showFocus}
+							onCancel={() => {
+								focusGeneration.current++
+								contextMenu!.hideContextMenu()
+								setFocus(undefined)
+								drag.handlers.onCancel()
+							}}
+							onStart={point => {
+								focusGeneration.current++
+								contextMenu!.hideContextMenu()
+								setFocus(undefined)
 								drag.begin(
 									item,
 									point,
@@ -2067,7 +2226,7 @@ export function createServerDrawer(
 									},
 									menu?.onLongPress,
 								)
-							}
+							}}
 						>
 							{content}
 						</DragTarget>
@@ -2095,7 +2254,6 @@ export function createServerDrawer(
 				items = visible,
 				visiblePage = true,
 			) => {
-				const offset = drag.offset(item.id)
 				const animated =
 					item.kind !== 'folder' &&
 					!!item.animatedAvatarUri &&
@@ -2125,13 +2283,6 @@ export function createServerDrawer(
 							(item.kind ? data.selectedGuildId : data.selectedPrivateChannelId)
 						}
 						dragging={active?.source.id === item.id}
-						merging={
-							!inFolder &&
-							active?.mergeReady === true &&
-							active.items[active.target].id === item.id
-						}
-						offsetX={offset?.x}
-						offsetY={offset?.y}
 					/>
 				)
 			}
@@ -2282,6 +2433,8 @@ export function createServerDrawer(
 
 			return signal.aborted ? null : (
 				<View
+					ref={root}
+					collapsable={false}
 					onLayout={({ nativeEvent: { layout } }: Native.LayoutChangeEvent) => {
 						if (layout.width > 0 && layout.height > 0) setViewport(layout)
 						if (layout.width > 0) onWidthChange(layout.width)
@@ -2289,270 +2442,320 @@ export function createServerDrawer(
 					pointerEvents="box-none"
 					style={styles.drawerBackdrop}
 				>
-					{overlayFolder && (
-						<FolderOverlay
-							key={overlayFolder.id}
-							folder={overlayFolder}
-							width={viewportWidth}
-							height={viewportHeight - bottomInset}
-							closeFolder={closeFolder}
-							renderItem={guild => renderItem(guild, true)}
-							gesture={resize.overlayGesture}
-							closing={!folderOverlayId}
-							backdropStyle={folderMotion.backdropStyle}
-							panelStyle={folderMotion.panelStyle}
-						/>
-					)}
 					<View
 						pointerEvents="box-none"
-						style={{
-							position: 'absolute',
-							overflow: 'hidden',
-							bottom: bottomInset - YOU_BAR_JOIN_DEPTH,
-							height: viewportHeight - bottomInset + YOU_BAR_JOIN_DEPTH,
-							left: panelLeft,
-							width: dockSpecs.dockWidth,
-						}}
+						style={[
+							Native.StyleSheet.absoluteFill,
+							focus && { filter: [{ blur: 12 }] },
+						]}
 					>
-						<GestureDetector gesture={resize.gesture}>
-							<AnimatedView
-								collapsable={false}
-								accessibilityLabel={
-									expanded
-										? view === 'servers'
-											? 'All servers drawer'
-											: 'Direct messages drawer'
-										: 'Server dock'
-								}
-								accessibilityViewIsModal={expanded}
-								importantForAccessibility={expanded ? 'yes' : 'auto'}
-								style={[
-									styles.drawerPanel,
-									FLOATING_PANEL_STYLE,
-									{
-										bottom: 0,
-										height: drawerHeight + YOU_BAR_JOIN_DEPTH,
-										width: dockSpecs.dockWidth,
-									},
-									resize.panelStyle,
-								]}
-							>
-								<View style={{ height: drawerHeight, overflow: 'hidden' }}>
-									<Pressable
-										accessibilityRole="button"
-										accessibilityState={{ expanded: expanded }}
-										accessibilityActions={[
-											{
-												label: expanded ? 'Collapse' : 'Expand',
-												name: 'activate',
-											},
-										]}
-										accessibilityLabel={
-											expanded
-												? 'Collapse server drawer'
-												: 'Expand server drawer'
-										}
-										hitSlop={{ bottom: 14, left: 14, right: 14, top: 14 }}
-										onAccessibilityAction={() => setDrawerOpen(!expanded)}
-										onPress={() => setDrawerOpen(!expanded)}
-										style={styles.handle}
-									>
-										<View style={styles.handleBar} />
-									</Pressable>
-									<AnimatedView
-										pointerEvents={expanded ? 'none' : 'auto'}
-										accessibilityElementsHidden={expanded}
-										importantForAccessibility={
-											expanded ? 'no-hide-descendants' : 'auto'
-										}
-										style={[styles.compactFace, resize.compactStyle]}
-									>
-										<PanGestureHandler
-											enabled={
-												data.carousel &&
-												data.nodes.length > dockSpecs.itemCountNoExtras &&
-												!expanded &&
-												!active &&
-												!folderOverlayId
+						{overlayFolder && (
+							<FolderOverlay
+								key={overlayFolder.id}
+								folder={overlayFolder}
+								width={viewportWidth}
+								height={viewportHeight - bottomInset}
+								closeFolder={closeFolder}
+								renderItem={guild => renderItem(guild, true)}
+								gesture={resize.overlayGesture}
+								closing={!folderOverlayId}
+								backdropStyle={folderMotion.backdropStyle}
+								panelStyle={folderMotion.panelStyle}
+							/>
+						)}
+						<View
+							pointerEvents="box-none"
+							style={{
+								position: 'absolute',
+								overflow: 'hidden',
+								bottom: bottomInset - YOU_BAR_JOIN_DEPTH,
+								height: viewportHeight - bottomInset + YOU_BAR_JOIN_DEPTH,
+								left: panelLeft,
+								width: dockSpecs.dockWidth,
+							}}
+						>
+							<GestureDetector gesture={resize.gesture}>
+								<AnimatedView
+									collapsable={false}
+									accessibilityLabel={
+										expanded
+											? view === 'servers'
+												? 'All servers drawer'
+												: 'Direct messages drawer'
+											: 'Server dock'
+									}
+									accessibilityViewIsModal={expanded}
+									importantForAccessibility={expanded ? 'yes' : 'auto'}
+									style={[
+										styles.drawerPanel,
+										FLOATING_PANEL_STYLE,
+										{
+											bottom: 0,
+											height: drawerHeight + YOU_BAR_JOIN_DEPTH,
+											width: dockSpecs.dockWidth,
+										},
+										resize.panelStyle,
+									]}
+								>
+									<View style={{ height: drawerHeight, overflow: 'hidden' }}>
+										<Pressable
+											accessibilityRole="button"
+											accessibilityState={{ expanded: expanded }}
+											accessibilityActions={[
+												{
+													label: expanded ? 'Collapse' : 'Expand',
+													name: 'activate',
+												},
+											]}
+											accessibilityLabel={
+												expanded
+													? 'Collapse server drawer'
+													: 'Expand server drawer'
 											}
-											activeOffsetX={[-touchSlop, touchSlop]}
-											failOffsetY={[-touchSlop, touchSlop]}
-											maxPointers={1}
-											shouldCancelWhenOutside={false}
-											onGestureEvent={carousel.onGestureEvent}
-											onHandlerStateChange={carousel.onHandlerStateChange}
+											hitSlop={{ bottom: 14, left: 14, right: 14, top: 14 }}
+											onAccessibilityAction={() => setDrawerOpen(!expanded)}
+											onPress={() => setDrawerOpen(!expanded)}
+											style={styles.handle}
 										>
-											<AnimatedView
-												style={[styles.dockRow, { height: dockSpecs.itemSize }]}
+											<View style={styles.handleBar} />
+										</Pressable>
+										<AnimatedView
+											pointerEvents={expanded ? 'none' : 'auto'}
+											accessibilityElementsHidden={expanded}
+											importantForAccessibility={
+												expanded ? 'no-hide-descendants' : 'auto'
+											}
+											style={[styles.compactFace, resize.compactStyle]}
+										>
+											<PanGestureHandler
+												enabled={
+													data.carousel &&
+													data.nodes.length > dockSpecs.itemCountNoExtras &&
+													!expanded &&
+													!active &&
+													!folderOverlayId
+												}
+												activeOffsetX={[-touchSlop, touchSlop]}
+												failOffsetY={[-touchSlop, touchSlop]}
+												maxPointers={1}
+												shouldCancelWhenOutside={false}
+												onGestureEvent={carousel.onGestureEvent}
+												onHandlerStateChange={carousel.onHandlerStateChange}
 											>
-												{data.carousel &&
-												data.nodes.length > dockSpecs.itemCountNoExtras ? (
-													<DockCarousel
-														nodes={data.nodes}
-														size={dockSpecs.itemSize}
-														slots={dockSpecs.itemCountNoExtras}
-														position={carousel.position}
-														renderItem={node =>
-															renderItem(node, false, dockSpecs.itemSize)
-														}
-													/>
-												) : (
-													Array.from(
-														{ length: dockSpecs.itemCountNoExtras },
-														(_, index) => {
-															const node = data.nodes[index]
-															if (
-																!node ||
-																(node.kind === 'folder' &&
-																	!node.children.length)
-															)
-																return (
-																	<View
-																		key={`spacer-${index}`}
-																		accessibilityElementsHidden
-																		importantForAccessibility="no-hide-descendants"
-																		style={{
-																			height: dockSpecs.itemSize,
-																			opacity: 0,
-																			width: dockSpecs.itemSize,
-																		}}
-																	/>
+												<AnimatedView
+													style={[
+														styles.dockRow,
+														{ height: dockSpecs.itemSize },
+													]}
+												>
+													{data.carousel &&
+													data.nodes.length > dockSpecs.itemCountNoExtras ? (
+														<DockCarousel
+															nodes={data.nodes}
+															size={dockSpecs.itemSize}
+															slots={dockSpecs.itemCountNoExtras}
+															position={carousel.position}
+															renderItem={node =>
+																renderItem(node, false, dockSpecs.itemSize)
+															}
+														/>
+													) : (
+														Array.from(
+															{ length: dockSpecs.itemCountNoExtras },
+															(_, index) => {
+																const node = data.nodes[index]
+																if (
+																	!node ||
+																	(node.kind === 'folder' &&
+																		!node.children.length)
 																)
+																	return (
+																		<View
+																			key={`spacer-${index}`}
+																			accessibilityElementsHidden
+																			importantForAccessibility="no-hide-descendants"
+																			style={{
+																				height: dockSpecs.itemSize,
+																				opacity: 0,
+																				width: dockSpecs.itemSize,
+																			}}
+																		/>
+																	)
 
-															return renderItem(node, false, dockSpecs.itemSize)
-														},
-													)
-												)}
-												<View
-													style={[
-														styles.dockDivider,
-														{ height: Math.round(dockSpecs.itemSize * 0.7) },
-													]}
-												/>
-												<Pressable
-													accessibilityRole="button"
-													onPress={() => changeView('dms', true)}
-													accessibilityLabel={`Direct Messages${
-														data.directMessageBadge.mentionCount > 0
-															? `, ${data.directMessageBadge.mentionCount} mentions`
-															: data.directMessageBadge.unread
-																? ', unread'
-																: ''
-													}`}
-													style={[
-														styles.dmButton,
-														{
-															height: dockSpecs.itemSize,
-															width: dockSpecs.itemSize,
-														},
-													]}
-												>
-													<Icon name="ChatIcon" color={TEXT_DEFAULT} />
-													<Badge state={data.directMessageBadge} compact />
-												</Pressable>
-												<Icon
-													label="View all servers"
-													onPress={() => setDrawerOpen(true)}
-													name="GridSquareIcon"
-													color={TEXT_DEFAULT}
-													buttonSize={dockSpecs.itemSize}
-													size={
-														Math.max(
-															10,
-															Math.floor((dockSpecs.itemSize * 0.8 - 5) / 2),
-														) *
-															2 +
-														5
-													}
-												/>
-											</AnimatedView>
-										</PanGestureHandler>
-									</AnimatedView>
-									{/* Keep the static list ready so opening does not mount it during the gesture. */}
-									<AnimatedView
-										pointerEvents={expanded ? 'auto' : 'none'}
-										accessibilityElementsHidden={!expanded}
-										importantForAccessibility={
-											expanded ? 'auto' : 'no-hide-descendants'
-										}
-										style={[styles.expandedFace, resize.expandedStyle]}
-									>
-										<View style={{ height: drawerHeight - 16 }}>
-											<View style={styles.header}>
-												{drawerFolder ? (
-													<Fragment>
-														<Icon
-															label="Back to all servers"
-															onPress={() => changeFolder()}
-															name="ArrowSmallLeftIcon"
-															color={TEXT_DEFAULT}
-															size={30}
-														/>
-														<FolderTitle
-															key={drawerFolder.id}
-															folder={drawerFolder}
-															style={{ flex: 1, paddingVertical: 8 }}
-														/>
-													</Fragment>
-												) : (
-													<Tabs
-														options={VIEW_OPTIONS}
-														value={view}
-														onChange={changeView}
-													/>
-												)}
-												<Icon
-													label={`Switch to ${grid ? 'list' : 'grid'} view`}
-													onPress={() =>
-														jsonStorage.set({ layout: grid ? 'list' : 'grid' })
-													}
-													name={grid ? 'ListViewIcon' : 'GridSquareIcon'}
-													color={TEXT_MUTED}
-												/>
-												<Icon
-													label={
-														view === 'servers'
-															? 'Create a server'
-															: 'Start a direct message'
-													}
-													onPress={() =>
-														open(
-															'open creation',
-															view === 'servers'
-																? controller.openCreateGuild
-																: controller.openCreateDm,
-														)
-													}
-													name="PlusLargeIcon"
-													color={TEXT_MUTED}
-												/>
-											</View>
-											<GestureDetector gesture={pages.gesture}>
-												<View
-													collapsable={false}
-													style={{ flex: 1, overflow: 'hidden' }}
-												>
-													<AnimatedView
-														style={[
-															{
-																width: pageWidth * 2,
-																height: '100%',
-																flexDirection: 'row',
+																return renderItem(
+																	node,
+																	false,
+																	dockSpecs.itemSize,
+																)
 															},
-															pages.style,
+														)
+													)}
+													<View
+														style={[
+															styles.dockDivider,
+															{ height: Math.round(dockSpecs.itemSize * 0.7) },
+														]}
+													/>
+													<Pressable
+														accessibilityRole="button"
+														onPress={() => changeView('dms', true)}
+														accessibilityLabel={`Direct Messages${
+															data.directMessageBadge.mentionCount > 0
+																? `, ${data.directMessageBadge.mentionCount} mentions`
+																: data.directMessageBadge.unread
+																	? ', unread'
+																	: ''
+														}`}
+														style={[
+															styles.dmButton,
+															{
+																height: dockSpecs.itemSize,
+																width: dockSpecs.itemSize,
+															},
 														]}
 													>
-														{renderPage('servers')}
-														{renderPage('dms')}
-													</AnimatedView>
+														<Icon name="ChatIcon" color={TEXT_DEFAULT} />
+														<Badge state={data.directMessageBadge} compact />
+													</Pressable>
+													<Icon
+														label="View all servers"
+														onPress={() => setDrawerOpen(true)}
+														name="GridSquareIcon"
+														color={TEXT_DEFAULT}
+														buttonSize={dockSpecs.itemSize}
+														size={
+															Math.max(
+																10,
+																Math.floor((dockSpecs.itemSize * 0.8 - 5) / 2),
+															) *
+																2 +
+															5
+														}
+													/>
+												</AnimatedView>
+											</PanGestureHandler>
+										</AnimatedView>
+										{/* Keep the static list ready so opening does not mount it during the gesture. */}
+										<AnimatedView
+											pointerEvents={expanded ? 'auto' : 'none'}
+											accessibilityElementsHidden={!expanded}
+											importantForAccessibility={
+												expanded ? 'auto' : 'no-hide-descendants'
+											}
+											style={[styles.expandedFace, resize.expandedStyle]}
+										>
+											<View style={{ height: drawerHeight - 16 }}>
+												<View style={styles.header}>
+													{drawerFolder ? (
+														<Fragment>
+															<Icon
+																label="Back to all servers"
+																onPress={() => changeFolder()}
+																name="ArrowSmallLeftIcon"
+																color={TEXT_DEFAULT}
+																size={30}
+															/>
+															<FolderTitle
+																key={drawerFolder.id}
+																folder={drawerFolder}
+																style={{ flex: 1, paddingVertical: 8 }}
+															/>
+														</Fragment>
+													) : (
+														<Tabs
+															options={VIEW_OPTIONS}
+															value={view}
+															onChange={changeView}
+														/>
+													)}
+													<Icon
+														label={`Switch to ${grid ? 'list' : 'grid'} view`}
+														onPress={() =>
+															jsonStorage.set({
+																layout: grid ? 'list' : 'grid',
+															})
+														}
+														name={grid ? 'ListViewIcon' : 'GridSquareIcon'}
+														color={TEXT_MUTED}
+													/>
+													<Icon
+														label={
+															view === 'servers'
+																? 'Create a server'
+																: 'Start a direct message'
+														}
+														onPress={() =>
+															open(
+																'open creation',
+																view === 'servers'
+																	? controller.openCreateGuild
+																	: controller.openCreateDm,
+															)
+														}
+														name="PlusLargeIcon"
+														color={TEXT_MUTED}
+													/>
 												</View>
-											</GestureDetector>
-										</View>
-									</AnimatedView>
-								</View>
-							</AnimatedView>
-						</GestureDetector>
+												<GestureDetector gesture={pages.gesture}>
+													<View
+														collapsable={false}
+														style={{ flex: 1, overflow: 'hidden' }}
+													>
+														<AnimatedView
+															style={[
+																{
+																	width: pageWidth * 2,
+																	height: '100%',
+																	flexDirection: 'row',
+																},
+																pages.style,
+															]}
+														>
+															{renderPage('servers')}
+															{renderPage('dms')}
+														</AnimatedView>
+													</View>
+												</GestureDetector>
+											</View>
+										</AnimatedView>
+									</View>
+								</AnimatedView>
+							</GestureDetector>
+						</View>
 					</View>
+					{focus && (
+						<View
+							pointerEvents="none"
+							style={[
+								Native.StyleSheet.absoluteFill,
+								{ backgroundColor: 'rgba(0,0,0,0.3)' },
+							]}
+						/>
+					)}
+					{focus && (
+						<View
+							pointerEvents="none"
+							style={{
+								position: 'absolute',
+								left: focus.bounds.x,
+								top: focus.bounds.y,
+								width: focus.bounds.width,
+								height: focus.bounds.height,
+							}}
+						>
+							<Item
+								item={focus.item}
+								layout={focus.layout}
+								compactSize={focus.compactSize}
+								selectedId={
+									focus.item.kind
+										? data.selectedGuildId
+										: data.selectedPrivateChannelId
+								}
+								animate={false}
+							/>
+						</View>
+					)}
 					{active ? (
 						<AnimatedView
 							accessibilityLabel={`Dragging ${active.source.name ?? 'Folder'}`}
